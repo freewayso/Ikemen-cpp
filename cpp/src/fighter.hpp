@@ -12,6 +12,7 @@ class Fighter {
   void Reset(int side, float x, float y);
   void SetAssets(Sff* sff, AirBank* air);
   void ChangeState(int st, int ctrl = -1);
+  void ChangeState(State st, int ctrl = -1) { ChangeState(+st, ctrl); }
   void SetAnim(int act, int elem = 0);
   void TickAnim();
   const AnimFrame* CurrentFrame() const;

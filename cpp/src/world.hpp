@@ -36,6 +36,16 @@ struct FightWorld {
   int lastHitDmg[2] = {0, 0};
   int comboHits[2] = {0, 0};
   int comboDmg[2] = {0, 0};
+  int intro = 0;
+  FinishType finishType = FinishType::NotYet;
+  int winTeam = -1;
+  int overHitTime = 12;
+  int overWaitTime = 48;
+  int overTime = 210;
+  int wins[2] = {0, 0};
+  int roundsToWin = 2;
+  int roundNo = 1;
+  int matchOver = 0;
   void Clear() {
     projs.clear();
     helpers.clear();
@@ -44,5 +54,22 @@ struct FightWorld {
     lastHitDmg[0] = lastHitDmg[1] = 0;
     comboHits[0] = comboHits[1] = 0;
     comboDmg[0] = comboDmg[1] = 0;
+  }
+  void ResetRound() {
+    Clear();
+    intro = 0;
+    finishType = FinishType::NotYet;
+    winTeam = -1;
+    matchOver = 0;
+  }
+  void ResetMatch() {
+    ResetRound();
+    wins[0] = wins[1] = 0;
+    roundNo = 1;
+  }
+  bool RoundEnded() const { return intro < -overHitTime; }
+  bool RoundOver() const { return intro < -overWaitTime; }
+  bool RoundNoDamage() const {
+    return intro < 0 && intro <= -overHitTime && intro >= -overWaitTime;
   }
 };

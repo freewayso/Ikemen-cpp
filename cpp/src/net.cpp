@@ -1,5 +1,4 @@
 #include "net.hpp"
-#include "log.hpp"
 #include "ikcp.h"
 #include "relay_proto.hpp"
 #include <cstring>
@@ -124,11 +123,6 @@ uint32_t DelayNet::peekU32() const {
 }
 
 bool DelayNet::queueBytes(const void* p, int n) {
-  if (tx_.size() > 4096) {
-    tx_.erase(0, txOff_);
-    txOff_ = 0;
-    if (tx_.size() > 4096) tx_.clear();
-  }
   tx_.append((const char*)p, (size_t)n);
   return true;
 }
@@ -358,7 +352,7 @@ bool DelayNet::Listen(int port) {
     listening_ = true;
     hs_ = HsIdle;
     sendReg();
-    GameLog::Get().Info("DelayNet UDP+KCP via relay room %.8s", room_);
+    std::fprintf(stderr, "DelayNet UDP+KCP via relay room %.8s\n", room_);
     return true;
   }
   SOCKET ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -375,7 +369,7 @@ bool DelayNet::Listen(int port) {
   listenSock_ = (uintptr_t)ls;
   listening_ = true;
   hs_ = HsIdle;
-  GameLog::Get().Info("DelayNet TCP listen %d (IKEMENGO)", port);
+  std::fprintf(stderr, "DelayNet TCP listen %d (IKEMENGO)\n", port);
   return true;
 }
 
@@ -404,7 +398,7 @@ int DelayNet::TryAccept() {
     resetBuf();
     rx_.clear(); rxOff_ = 0;
     active_ = true;
-    GameLog::Get().Info("TryAccept: peer IKEMENGO ok");
+    std::fprintf(stderr, "TryAccept: peer IKEMENGO ok\n");
     return 1;
   }
   SOCKET ls = (SOCKET)listenSock_;
@@ -425,7 +419,7 @@ int DelayNet::TryAccept() {
   peerOk_ = true;
   queueBytes("IKEMENGO", 8);
   if (!pumpIo()) return -1;
-  GameLog::Get().Info("TryAccept: accepted, sent IKEMENGO");
+  std::fprintf(stderr, "TryAccept: accepted, sent IKEMENGO\n");
   return 0;
 }
 
@@ -525,7 +519,7 @@ NetPump DelayNet::PumpConnect() {
   }
   active_ = true;
   hs_ = HsIdle;
-  GameLog::Get().Info("PumpConnect: magic ok");
+  std::fprintf(stderr, "PumpConnect: magic ok\n");
   return NetPump::Ready;
 }
 
@@ -552,7 +546,7 @@ void DelayNet::BeginHandshake(const std::string& fingerprint) {
     queueBytes(b, 4);
     queueBytes(local.data(), (int)local.size());
   }
-  GameLog::Get().Info("BeginHandshake host=%d rx=%d", (int)host_, (int)rx_.size() - rxOff_);
+  std::fprintf(stderr, "BeginHandshake host=%d rx=%d\n", (int)host_, (int)rx_.size() - rxOff_);
 }
 
 static std::string jsonGet(const std::string& j, const char* key) {
@@ -676,25 +670,7 @@ NetPump DelayNet::TryExchange(uint32_t localNow, uint32_t& localPlay, uint32_t& 
     remInp_++;
     remSen_ = remInp_;
   }
-  if (time_ >= locSen_ || time_ >= remSen_) {
-    stall_++;
-    if (stall_ >= 8) {
-      if (time_ >= remSen_) {
-        uint32_t pred = remSen_ > 0 ? rem_[(remSen_ - 1) & 31] : 0;
-        rem_[remInp_ & 31] = pred;
-        remInp_++;
-        remSen_ = remInp_;
-      }
-      if (time_ >= locSen_) {
-        loc_[locInp_ & 31] = localNow;
-        locInp_++;
-        locSen_ = locInp_;
-      }
-    } else {
-      return NetPump::Pending;
-    }
-  }
-  stall_ = 0;
+  if (time_ >= locSen_ || time_ >= remSen_) return NetPump::Pending;
   localPlay = loc_[time_ & 31];
   remotePlay = rem_[time_ & 31];
   time_++;

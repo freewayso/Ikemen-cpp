@@ -64,7 +64,6 @@ class DelayNet {
   int dummyLeft_ = 0;
   bool exchSent_ = false;
   int32_t remSen_ = 0;
-  int stall_ = 0;
   IKCPCB* kcp_ = nullptr;
   unsigned char peer_[128]{};
   int peerLen_ = 0;

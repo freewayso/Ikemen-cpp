@@ -2,6 +2,7 @@
 #include "gl_loader.hpp"
 #include <cstdio>
 #include <cmath>
+#include <cctype>
 
 #ifndef APIENTRY
 #define APIENTRY
@@ -144,9 +145,10 @@ void Renderer::Begin(float vw, float vh) {
 
 unsigned Renderer::bindSpriteTex(const SpriteImage& spr) {
   if (spr.w <= 0 || spr.h <= 0 || spr.rgba.size() < (size_t)spr.w * spr.h * 4) return 0;
-  if (spr.glTex) {
-    pglBindTexture(0x0DE1, spr.glTex);
-    return spr.glTex;
+  auto it = texCache_.find(&spr);
+  if (it != texCache_.end()) {
+    pglBindTexture(0x0DE1, it->second);
+    return it->second;
   }
   unsigned id = 0;
   pglGenTextures(1, &id);
@@ -157,7 +159,7 @@ unsigned Renderer::bindSpriteTex(const SpriteImage& spr) {
   pglTexParameteri(0x0DE1, 0x2802, 0x812F);
   pglTexParameteri(0x0DE1, 0x2803, 0x812F);
   pglTexImage2D(0x0DE1, 0, 0x8058, spr.w, spr.h, 0, 0x1908, 0x1401, spr.rgba.data());
-  spr.glTex = id;
+  texCache_[&spr] = id;
   return id;
 }
 
@@ -184,7 +186,6 @@ void Renderer::DrawSprite(const SpriteImage& spr, float x, float y, float facing
 void Renderer::DrawSprite(const SpriteImage& spr, float x, float y, float facing, float sx, float sy,
                           float r, float g, float b, float a) {
   if (spr.w <= 0 || spr.rgba.empty()) return;
-  if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(sx) || !std::isfinite(sy)) return;
   if (!bindSpriteTex(spr)) return;
   float w = spr.w * std::fabs(sx);
   float h = spr.h * std::fabs(sy);
@@ -237,6 +238,38 @@ void Renderer::DrawDigits(float x, float y, int value, float scale, float r, flo
     }
     if (*p < '0' || *p > '9') continue;
     const char* bits = glyph[*p - '0'];
+    for (int row = 0; row < 5; row++)
+      for (int col = 0; col < 3; col++)
+        if (bits[row * 3 + col] == '1')
+          DrawRect(cx + col * px, y + row * px, px, px, r, g, b, a);
+    cx += 4.f * px + gap;
+  }
+}
+
+void Renderer::DrawWord(float x, float y, const char* word, float scale, float r, float g, float b, float a) {
+  auto bitsOf = [](char ch) -> const char* {
+    switch (ch) {
+      case 'A': return "010101111101101";
+      case 'R': return "111101111110101";
+      case 'U': return "101101101101111";
+      case 'K': return "101101110101101";
+      case 'O': return "111101101101111";
+      case 'W': return "101101101111101";
+      case 'I': return "111010010010111";
+      case 'N': return "101111111101101";
+      case 'D': return "110101101101110";
+      case 'P': return "111101111100100";
+      case '1': return "001001001001001";
+      case '2': return "111001111100111";
+      default: return nullptr;
+    }
+  };
+  float px = 1.4f * scale, gap = 1.6f * scale;
+  float cx = x;
+  for (const char* p = word; *p; ++p) {
+    if (*p == ' ') { cx += 3.f * px + gap; continue; }
+    const char* bits = bitsOf((char)toupper((unsigned char)*p));
+    if (!bits) { cx += 4.f * px + gap; continue; }
     for (int row = 0; row < 5; row++)
       for (int col = 0; col < 3; col++)
         if (bits[row * 3 + col] == '1')

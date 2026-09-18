@@ -11,11 +11,11 @@ void Fighter::Reset(int side, float x, float y) {
   snap.power = snap.powerMax = 3000;
   snap.ctrl = 1;
   snap.alive = 1;
-  snap.state = 0;
-  snap.stateType = 'S';
-  snap.moveType = 'I';
-  snap.physics = 'S';
-  SetAnim(0);
+  snap.state = +State::Stand;
+  snap.stateType = +StateType::Stand;
+  snap.moveType = +MoveType::Idle;
+  snap.physics = +Physics::Stand;
+  SetAnim(+State::Stand);
 }
 
 void Fighter::SetAssets(Sff* s, AirBank* a) { sff = s; air = a; }
@@ -27,15 +27,13 @@ void Fighter::ChangeState(int st, int ctrl) {
   }
   snap.state = st;
   snap.time = 0;
-  snap.ctrl = (ctrl >= 0) ? ctrl : ((st == 0 || st == 20 || st == 11) ? 1 : 0);
-  SetAnim(st == 212 ? 5030 : st);
+  snap.ctrl = (ctrl >= 0) ? ctrl : (StateGivesCtrl(st) ? 1 : 0);
+  SetAnim(st == State::KfmAirSpecial ? +State::AirGetHit : st);
 }
 
 void Fighter::SetAnim(int act, int elem) {
-  elem = std::max(0, elem);
-  if (snap.anim == act && snap.animElem == elem) return;
   snap.anim = act;
-  snap.animElem = elem;
+  snap.animElem = std::max(0, elem);
   snap.animTime = 0;
   snap.animEnded = 0;
   const Animation* a = air ? air->Get(snap.anim) : nullptr;

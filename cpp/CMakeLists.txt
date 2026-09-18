@@ -33,12 +33,12 @@ add_executable(ikemen_cpp
   src/cmd.cpp
   src/input.cpp
   src/net.cpp
+  src/room_sync.cpp
   src/camera.cpp
   src/rollback.cpp
   src/stage.cpp
   src/title.cpp
   src/cns.cpp
-  src/log.cpp
   third_party/kcp/ikcp.c
 )
 
@@ -64,8 +64,8 @@ set_target_properties(ikemen_cpp PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/../bin_cpp
 )
 
-add_executable(ikemen_relay src/relay_server.cpp)
-target_include_directories(ikemen_relay PRIVATE src)
+add_executable(ikemen_relay src/relay_server.cpp third_party/kcp/ikcp.c)
+target_include_directories(ikemen_relay PRIVATE src ${CMAKE_CURRENT_SOURCE_DIR}/third_party/kcp)
 if(WIN32)
   target_link_libraries(ikemen_relay PRIVATE ws2_32)
 endif()

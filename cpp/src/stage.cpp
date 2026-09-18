@@ -1,5 +1,4 @@
 #include "stage.hpp"
-#include "log.hpp"
 #include <fstream>
 #include <algorithm>
 #include <cctype>
@@ -92,10 +91,10 @@ bool Stage::Load(const std::string& defPath) {
     }
   }
   if (!sff.Load(sprFile)) {
-    GameLog::Get().Warn("stage sff failed %s", sprFile.c_str());
+    std::fprintf(stderr, "warn: stage sff failed %s\n", sprFile.c_str());
     return false;
   }
-  GameLog::Get().Info("stage loaded %s bgs=%zu zoffset=%.0f start=%.0f,%.0f",
+  std::fprintf(stderr, "stage loaded %s bgs=%zu zoffset=%.0f start=%.0f,%.0f\n",
                sprFile.c_str(), bgs.size(), zoffset, p1startx, p2startx);
   return true;
 }

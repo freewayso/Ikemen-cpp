@@ -7,12 +7,14 @@
 #include "cns.hpp"
 #include "input.hpp"
 #include "net.hpp"
+#include "room_sync.hpp"
 #include "camera.hpp"
 #include "rollback.hpp"
 #include "stage.hpp"
 #include "title.hpp"
 #include "world.hpp"
 #include <array>
+#include <cstdio>
 #include <string>
 
 class Engine : public GgpoSession {
@@ -28,8 +30,12 @@ class Engine : public GgpoSession {
   void Tick();
   void DetectHits();
   void ResetMatch();
+  void NextRound();
+  void StepRoundState();
   void DrawFight();
   void SimulateFight();
+  void StepFightWithInputs(uint32_t i1, uint32_t i2, bool netOn);
+  bool beginRoom(bool host);
   std::string contentFingerprint() const;
   Renderer render_;
   Sff sff_;
@@ -38,6 +44,7 @@ class Engine : public GgpoSession {
   LuaHost lua_;
   InputSys input_;
   DelayNet delayNet_;
+  RoomSync room_;
   GgpoPeer ggpo_;
   RollbackStore rbStore_;
   bool ggpoAbort_ = false;
@@ -50,13 +57,15 @@ class Engine : public GgpoSession {
   int screen_ = kTitle;
   bool running_ = true;
   bool training_ = false;
-  bool autoHit_ = false;
   int frame_ = 0;
   std::string mode_ = "local";
   std::string connectIp_;
+  std::string relayHost_ = "127.0.0.1";
+  int relayPort_ = 9000;
+  std::string roomName_ = "kfm1";
+  FILE* inputLog_ = nullptr;
   uint32_t lastLogBits_ = 0xFFFFFFFFu;
   int lastLogState_ = -999;
-  int lastLogState2_ = -999;
   std::string gameMode_ = "arcade";
   float p1AiLevel_ = 0.f;
   float p2AiLevel_ = 4.f;

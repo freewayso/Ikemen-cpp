@@ -1,5 +1,6 @@
 #pragma once
 #include "render.hpp"
+#include "types.hpp"
 #include <string>
 #include <vector>
 
@@ -24,8 +25,8 @@ class TitleScreen {
   float textWidth(const char* s) const;
   const std::vector<Item>& items() const;
 
-  int menu_ = 0;
-  int fightMenu_ = 1;
+  int menu_ = +TitleMenu::Root;
+  int fightMenu_ = +TitleMenu::Arcade;
   int cursor_ = 0;
   int scroll_ = 0;
   int frame_ = 0;

@@ -1,5 +1,4 @@
 #include "sff.hpp"
-#include "log.hpp"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #include <fstream>
@@ -403,7 +402,7 @@ bool Sff::Load(const std::string& path, const std::vector<uint16_t>& keepGroups)
   size_t okImg = 0;
   for (auto& kv : sprites_)
     if (kv.second.w > 0) okImg++;
-  GameLog::Get().Info("SFF v%d loaded %zu/%zu decoded sprites from %s", verhi, okImg, sprites_.size(), path.c_str());
+  std::fprintf(stderr, "SFF v%d loaded %zu/%zu decoded sprites from %s\n", verhi, okImg, sprites_.size(), path.c_str());
   return ok && okImg > 0;
 }
 

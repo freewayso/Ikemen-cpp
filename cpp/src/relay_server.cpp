@@ -1,10 +1,13 @@
 #include "relay_proto.hpp"
+#include <cstdarg>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <map>
 #include <string>
+#include <vector>
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -23,6 +26,9 @@ using socklen_t = int;
 #define INVALID_SOCKET -1
 #define closesocket close
 #endif
+extern "C" {
+#include "ikcp.h"
+}
 
 struct Endpoint {
   sockaddr_in addr{};
@@ -30,9 +36,49 @@ struct Endpoint {
   uint32_t lastMs = 0;
 };
 
-struct Room {
+struct RoomFwd {
   Endpoint host, guest;
 };
+
+struct FrameRec {
+  int32_t frame = 0;
+  uint32_t i0 = 0;
+  uint32_t i1 = 0;
+};
+
+struct RoomPlay;
+struct Sess {
+  sockaddr_in addr{};
+  IKCPCB* kcp = nullptr;
+  SOCKET* sock = nullptr;
+  char room[8]{};
+  int role = -1;
+  uint32_t lastMs = 0;
+  bool alive = true;
+  RoomPlay* play = nullptr;
+};
+
+struct RoomPlay {
+  Sess* p[2]{};
+  uint32_t seed = 1;
+  int32_t confirmed = -1;
+  struct Slot {
+    uint32_t bits[2]{};
+    uint8_t got = 0;
+  };
+  std::map<int32_t, Slot> pending;
+  std::deque<FrameRec> hist;
+};
+
+static SOCKET gSock = INVALID_SOCKET;
+
+static void logf(const char* fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  std::vfprintf(stdout, fmt, ap);
+  va_end(ap);
+  std::fflush(stdout);
+}
 
 static uint32_t nowMs() {
   using namespace std::chrono;
@@ -43,6 +89,99 @@ static bool sameAddr(const sockaddr_in& a, const sockaddr_in& b) {
   return a.sin_port == b.sin_port && a.sin_addr.s_addr == b.sin_addr.s_addr;
 }
 
+static std::string addrKey(const sockaddr_in& a) {
+  char ip[64];
+  inet_ntop(AF_INET, &a.sin_addr, ip, sizeof(ip));
+  return std::string(ip) + ":" + std::to_string(ntohs(a.sin_port));
+}
+
+static int kcpOut(const char* buf, int len, ikcpcb*, void* user) {
+  auto* s = (Sess*)user;
+  if (!s || gSock == INVALID_SOCKET) return -1;
+  int n = sendto(gSock, buf, len, 0, (sockaddr*)&s->addr, sizeof(s->addr));
+  return n == len ? 0 : -1;
+}
+
+static void kcpSetup(Sess* s, uint32_t conv) {
+  if (s->kcp) {
+    ikcp_release(s->kcp);
+    s->kcp = nullptr;
+  }
+  s->kcp = ikcp_create(conv, s);
+  ikcp_setoutput(s->kcp, kcpOut);
+  ikcp_nodelay(s->kcp, 1, 10, 2, 1);
+  ikcp_wndsize(s->kcp, 256, 256);
+}
+
+static void sendFs(Sess* s, const FsMsg& m, const unsigned char* extra = nullptr, int extraN = 0) {
+  if (!s || !s->kcp) return;
+  fsDump("relay", "tx", m, kFsHdr + extraN);
+  unsigned char buf[kFsHdr + 512];
+  fsWrite(buf, m);
+  if (extra && extraN > 0) std::memcpy(buf + kFsHdr, extra, (size_t)extraN);
+  ikcp_send(s->kcp, (const char*)buf, kFsHdr + extraN);
+  ikcp_update(s->kcp, nowMs());
+  ikcp_flush(s->kcp);
+}
+
+static void sendCatchup(Sess* s, RoomPlay* rm, int32_t from) {
+  if (!rm) return;
+  unsigned char extra[480];
+  int nrec = 0;
+  int off = 0;
+  auto wu32 = [](unsigned char* d, uint32_t v) {
+    d[0] = (unsigned char)v;
+    d[1] = (unsigned char)(v >> 8);
+    d[2] = (unsigned char)(v >> 16);
+    d[3] = (unsigned char)(v >> 24);
+  };
+  for (const auto& rec : rm->hist) {
+    if (rec.frame < from) continue;
+    if (nrec >= 40) break;
+    wu32(extra + off, (uint32_t)rec.frame);
+    wu32(extra + off + 4, rec.i0);
+    wu32(extra + off + 8, rec.i1);
+    off += 12;
+    nrec++;
+  }
+  FsMsg m;
+  m.cmd = kFsCatchupPack;
+  m.frame = rm->confirmed;
+  m.seed = rm->seed;
+  m.count = (uint16_t)nrec;
+  std::memcpy(m.room, s->room, 8);
+  sendFs(s, m, extra, off);
+}
+
+static void tryConfirm(RoomPlay* rm) {
+  for (;;) {
+    int32_t need = rm->confirmed + 1;
+    auto it = rm->pending.find(need);
+    if (it == rm->pending.end() || it->second.got != 3) break;
+    FrameRec rec{need, it->second.bits[0], it->second.bits[1]};
+    rm->hist.push_back(rec);
+    while ((int)rm->hist.size() > 3600) rm->hist.pop_front();
+    rm->confirmed = need;
+    rm->pending.erase(it);
+    if (rec.frame < 3 || rec.frame % 60 == 0) {
+      logf("confirm room frame=%d p0=%u p1=%u hist=%d\n", rec.frame, rec.i0, rec.i1,
+           (int)rm->hist.size());
+    }
+    FsMsg m;
+    m.cmd = kFsConfirm;
+    m.frame = rec.frame;
+    m.a = rec.i0;
+    m.b = rec.i1;
+    m.seed = rm->seed;
+    for (int i = 0; i < 2; i++) {
+      if (rm->p[i]) {
+        std::memcpy(m.room, rm->p[i]->room, 8);
+        sendFs(rm->p[i], m);
+      }
+    }
+  }
+}
+
 int main(int argc, char** argv) {
   int port = 9000;
   if (argc > 1) port = std::atoi(argv[1]);
@@ -50,85 +189,178 @@ int main(int argc, char** argv) {
   WSADATA w;
   WSAStartup(MAKEWORD(2, 2), &w);
 #endif
-  SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-  if (s == INVALID_SOCKET) {
+  gSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (gSock == INVALID_SOCKET) {
     std::fprintf(stderr, "socket failed\n");
     return 1;
   }
   int opt = 1;
-  setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
+  setsockopt(gSock, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
   sockaddr_in bindAddr{};
   bindAddr.sin_family = AF_INET;
   bindAddr.sin_port = htons((uint16_t)port);
   bindAddr.sin_addr.s_addr = INADDR_ANY;
-  if (bind(s, (sockaddr*)&bindAddr, sizeof(bindAddr)) < 0) {
+  if (bind(gSock, (sockaddr*)&bindAddr, sizeof(bindAddr)) < 0) {
     std::fprintf(stderr, "bind %d failed\n", port);
     return 1;
   }
-  std::fprintf(stderr, "Ikemen UDP relay on %d (rooms via --room on clients)\n", port);
+#ifdef _WIN32
+  setvbuf(stdout, nullptr, _IONBF, 0);
+  setvbuf(stderr, nullptr, _IONBF, 0);
+#endif
+  logf("Ikemen KCP room frame-sync on %d\n", port);
+  logf("waiting for host/guest JOIN (same --room)\n");
+  fsPrintSpec("relay");
 
-  std::map<std::string, Room> rooms;
+  std::map<std::string, RoomFwd> fwd;
+  std::map<std::string, Sess*> sessByAddr;
+  std::map<std::string, RoomPlay*> plays;
+
   unsigned char buf[2048];
   for (;;) {
     fd_set r;
     FD_ZERO(&r);
-    FD_SET(s, &r);
-    timeval tv{1, 0};
+    FD_SET(gSock, &r);
+    timeval tv{0, 10000};
 #ifdef _WIN32
     int nfds = 0;
 #else
-    int nfds = (int)s + 1;
+    int nfds = (int)gSock + 1;
 #endif
-    if (select(nfds, &r, nullptr, nullptr, &tv) <= 0) {
-      uint32_t t = nowMs();
-      for (auto it = rooms.begin(); it != rooms.end();) {
-        bool dead = (!it->second.host.ok || t - it->second.host.lastMs > 30000) &&
-                    (!it->second.guest.ok || t - it->second.guest.lastMs > 30000);
-        if (dead) it = rooms.erase(it);
-        else ++it;
-      }
-      continue;
-    }
-    sockaddr_in src{};
-    socklen_t sl = sizeof(src);
-    int n = recvfrom(s, (char*)buf, sizeof(buf), 0, (sockaddr*)&src, &sl);
-    if (n < kRlHdr || !rlIs(buf, n)) continue;
-    char roomKey[9] = {};
-    std::memcpy(roomKey, buf + 5, 8);
-    Room& rm = rooms[std::string(roomKey, 8)];
-    uint8_t cmd = buf[4];
+    int sel = select(nfds, &r, nullptr, nullptr, &tv);
     uint32_t t = nowMs();
-    auto stamp = [&](Endpoint& e) {
-      e.addr = src;
-      e.ok = true;
-      e.lastMs = t;
-    };
-    if (cmd == kRlRegHost) {
-      stamp(rm.host);
-      std::fprintf(stderr, "room %.8s host %s:%d\n", roomKey, inet_ntoa(src.sin_addr), ntohs(src.sin_port));
-    } else if (cmd == kRlRegGuest) {
-      stamp(rm.guest);
-      std::fprintf(stderr, "room %.8s guest %s:%d\n", roomKey, inet_ntoa(src.sin_addr), ntohs(src.sin_port));
-    } else if (cmd == kRlKeep) {
-      if (rm.host.ok && sameAddr(rm.host.addr, src)) rm.host.lastMs = t;
-      if (rm.guest.ok && sameAddr(rm.guest.addr, src)) rm.guest.lastMs = t;
-    } else if (cmd == kRlData && n > kRlHdr) {
-      Endpoint* dst = nullptr;
-      if (rm.host.ok && sameAddr(rm.host.addr, src)) {
-        rm.host.lastMs = t;
-        if (rm.guest.ok) dst = &rm.guest;
-      } else if (rm.guest.ok && sameAddr(rm.guest.addr, src)) {
-        rm.guest.lastMs = t;
-        if (rm.host.ok) dst = &rm.host;
-      } else if (rm.host.ok && !rm.guest.ok) {
-        stamp(rm.guest);
-        dst = &rm.host;
-      } else if (rm.guest.ok && !rm.host.ok) {
-        stamp(rm.host);
-        dst = &rm.guest;
+    if (sel > 0 && FD_ISSET(gSock, &r)) {
+      sockaddr_in src{};
+      socklen_t sl = sizeof(src);
+      int n = recvfrom(gSock, (char*)buf, sizeof(buf), 0, (sockaddr*)&src, &sl);
+      if (n >= kRlHdr && rlIs(buf, n)) {
+        char roomKey[9] = {};
+        std::memcpy(roomKey, buf + 5, 8);
+        RoomFwd& rm = fwd[std::string(roomKey, 8)];
+        uint8_t cmd = buf[4];
+        auto stamp = [&](Endpoint& e) {
+          e.addr = src;
+          e.ok = true;
+          e.lastMs = t;
+        };
+        if (cmd == kRlRegHost) {
+          stamp(rm.host);
+          std::fprintf(stderr, "fwd room %.8s host\n", roomKey);
+        } else if (cmd == kRlRegGuest) {
+          stamp(rm.guest);
+        } else if (cmd == kRlKeep) {
+          if (rm.host.ok && sameAddr(rm.host.addr, src)) rm.host.lastMs = t;
+          if (rm.guest.ok && sameAddr(rm.guest.addr, src)) rm.guest.lastMs = t;
+        } else if (cmd == kRlData && n > kRlHdr) {
+          Endpoint* dst = nullptr;
+          if (rm.host.ok && sameAddr(rm.host.addr, src)) {
+            rm.host.lastMs = t;
+            if (rm.guest.ok) dst = &rm.guest;
+          } else if (rm.guest.ok && sameAddr(rm.guest.addr, src)) {
+            rm.guest.lastMs = t;
+            if (rm.host.ok) dst = &rm.host;
+          }
+          if (dst && dst->ok)
+            sendto(gSock, (char*)buf, n, 0, (sockaddr*)&dst->addr, sizeof(dst->addr));
+        }
+      } else if (n >= 24) {
+        std::string key = addrKey(src);
+        Sess* s = sessByAddr[key];
+        if (!s) {
+          uint32_t conv = (uint32_t)buf[0] | ((uint32_t)buf[1] << 8) | ((uint32_t)buf[2] << 16) |
+                          ((uint32_t)buf[3] << 24);
+          s = new Sess();
+          s->addr = src;
+          kcpSetup(s, conv);
+          sessByAddr[key] = s;
+        }
+        s->addr = src;
+        s->lastMs = t;
+        ikcp_input(s->kcp, (const char*)buf, n);
+        ikcp_update(s->kcp, t);
+        for (;;) {
+          int got = ikcp_recv(s->kcp, (char*)buf, sizeof(buf));
+          if (got <= 0) break;
+          if (!fsIs(buf, got)) continue;
+          FsMsg m = fsRead(buf);
+          fsDump("relay", "rx", m, got);
+          std::string rk(m.room, m.room + 8);
+          if (m.cmd == kFsJoin) {
+            int role = m.role ? 1 : 0;
+            RoomPlay*& rp = plays[rk];
+            if (!rp) {
+              rp = new RoomPlay();
+              rp->seed = t ^ 0x9E3779B9u;
+            }
+            bool wasBoth = rp->p[0] && rp->p[1];
+            Sess* prev = rp->p[role];
+            if (prev && prev != s) prev->alive = false;
+            s->role = role;
+            std::memcpy(s->room, m.room, 8);
+            s->play = rp;
+            rp->p[role] = s;
+            bool reconnect = prev && prev != s;
+            if (!prev || reconnect) {
+              logf("join room %.8s role=%s %s%s\n", m.room, role ? "guest" : "host", key.c_str(),
+                   reconnect ? " reconnect" : "");
+            }
+            bool nowBoth = rp->p[0] && rp->p[1];
+            if (nowBoth && (!wasBoth || reconnect)) {
+              logf("ready room %.8s latest=%d seed=%u\n", m.room, (int)rp->confirmed, rp->seed);
+              FsMsg ok;
+              ok.cmd = kFsJoinOk;
+              ok.seed = rp->seed;
+              ok.frame = rp->confirmed;
+              std::memcpy(ok.room, m.room, 8);
+              sendFs(rp->p[0], ok);
+              sendFs(rp->p[1], ok);
+            }
+          } else if (m.cmd == kFsInput && s->play && s->role >= 0) {
+            RoomPlay* rp = s->play;
+            int32_t fr = m.frame;
+            if (fr < 0) continue;
+            auto& slot = rp->pending[fr];
+            slot.bits[s->role] = m.a;
+            slot.got |= (uint8_t)(1u << s->role);
+            tryConfirm(rp);
+          } else if (m.cmd == kFsCatchup && s->play) {
+            if (m.frame == 0 || m.frame % 120 == 0) {
+              logf("catchup room %.8s from=%d confirmed=%d\n", m.room, (int)m.frame,
+                   (int)s->play->confirmed);
+            }
+            sendCatchup(s, s->play, m.frame);
+          }
+        }
+        ikcp_flush(s->kcp);
       }
-      if (dst && dst->ok)
-        sendto(s, (char*)buf, n, 0, (sockaddr*)&dst->addr, sizeof(dst->addr));
+    }
+    for (auto& kv : sessByAddr) {
+      Sess* s = kv.second;
+      if (!s || !s->kcp) continue;
+      ikcp_update(s->kcp, t);
+      ikcp_flush(s->kcp);
+      if (t - s->lastMs > 20000) s->alive = false;
+    }
+    for (auto it = sessByAddr.begin(); it != sessByAddr.end();) {
+      Sess* s = it->second;
+      if (s && !s->alive) {
+        if (s->play) {
+          for (int i = 0; i < 2; i++) {
+            if (s->play->p[i] == s) s->play->p[i] = nullptr;
+            else if (s->play->p[i]) {
+              FsMsg d;
+              d.cmd = kFsDrop;
+              std::memcpy(d.room, s->room, 8);
+              sendFs(s->play->p[i], d);
+            }
+          }
+        }
+        if (s->kcp) ikcp_release(s->kcp);
+        delete s;
+        it = sessByAddr.erase(it);
+      } else {
+        ++it;
+      }
     }
   }
 }

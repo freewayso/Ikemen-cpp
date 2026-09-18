@@ -59,4 +59,22 @@ void Hud::Draw(Renderer& r, const Fighter& a, const Fighter& b, const FightWorld
     r.DrawDigits(kGameW - 70.f, 16.f, w.comboHits[1], 1.4f, 1, 1, 1, 1);
     r.DrawDigits(kGameW - 50.f, 16.f, w.comboDmg[1], 1.4f, 1, 0.35f, 0.2f, 1);
   }
+  r.DrawDigits(140.f, 4.f, w.wins[0], 1.2f, 1, 1, 0.4f, 1);
+  r.DrawDigits(172.f, 4.f, w.wins[1], 1.2f, 1, 1, 0.4f, 1);
+  if (w.finishType != FinishType::NotYet) {
+    if (w.intro > -w.overHitTime) {
+      if (w.finishType == FinishType::DKO)
+        r.DrawWord(118.f, 88.f, "DKO", 3.2f, 1, 0.85f, 0.2f, 1);
+      else
+        r.DrawWord(128.f, 88.f, "KO", 3.6f, 1, 0.2f, 0.15f, 1);
+    } else {
+      if (w.winTeam < 0)
+        r.DrawWord(108.f, 88.f, "DRAW", 2.8f, 1, 1, 1, 1);
+      else {
+        r.DrawWord(96.f, 80.f, "WIN", 3.2f, 1, 0.85f, 0.15f, 1);
+        char p[2] = { (char)('1' + w.winTeam), 0 };
+        r.DrawWord(118.f, 108.f, p, 3.2f, 1, 0.9f, 0.3f, 1);
+      }
+    }
+  }
 }

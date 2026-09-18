@@ -2,48 +2,28 @@
 #include "fighter.hpp"
 #include "world.hpp"
 #include <string>
-#include <vector>
 #include <unordered_map>
-#include <unordered_set>
-
-struct CnsParam {
-  std::string key, val;
-};
-
-struct CnsCtrl {
-  std::string type;
-  std::vector<CnsParam> params;
-  std::vector<std::string> triggerall;
-  std::vector<std::vector<std::string>> triggers; // OR of AND-groups (1-based)
-  std::vector<CnsCtrl> children;
-  int persistent = 1;
-  int ignorehitpause = 0;
-};
 
 struct CnsStateDef {
   int no = 0;
-  char type = 'S', movetype = 'I', physics = 'S';
+  char type = +StateType::Stand, movetype = +MoveType::Idle, physics = +Physics::Stand;
   int anim = -1, ctrl = -1;
   float velx = 1e9f, vely = 1e9f;
   int poweradd = 0;
-  std::vector<CnsCtrl> ctrls;
 };
 
 class CnsBank {
  public:
   bool LoadFile(const std::string& path);
-  bool LoadZss(const std::string& path);
   const CnsStateDef* Get(int no) const;
   void Enter(Fighter& f, int no, int ctrlOverride = -1);
-  void ActionPrepare(Fighter& f); // Go Char.actionPrepare hardcoded keys
-  void RunMinusOne(Fighter& f, Fighter& p2);
-  void RunCurrent(Fighter& f, Fighter& p2);
-  void CommonLoco(Fighter& f);
+  void Enter(Fighter& f, State no, int ctrlOverride = -1) { Enter(f, +no, ctrlOverride); }
   void ApplyPhysics(Fighter& f, float left, float right);
   void GlobalCollision(Fighter& a, Fighter& b);
   void TickProjectiles(Fighter& p1, Fighter& p2, float left, float right);
-  void OnHit(Fighter& atk, Fighter& def, int hitResult);
+  void OnHit(Fighter& atk, Fighter& def, HitResult hitResult);
   void ApplyQueuedDamage(Fighter& f);
+  void ActionFinish(Fighter& f);
   int ComputeDamage(const Fighter& def, const Fighter& atk, int raw, bool kill, bool bounds) const;
   FightWorld* world = nullptr;
 
@@ -56,12 +36,4 @@ class CnsBank {
 
  private:
   std::unordered_map<int, CnsStateDef> defs_;
-  std::unordered_map<std::string, std::vector<CnsCtrl>> funcs_;
-  std::unordered_map<std::string, std::vector<std::string>> funcParams_;
-  void runCtrlList(const std::vector<CnsCtrl>& ctrls, Fighter& f, Fighter& p2);
-  bool evalTriggers(const CnsCtrl& c, Fighter& f, Fighter& p2) const;
-  bool evalBool(const std::string& e, Fighter& f, Fighter& p2) const;
-  float evalNum(const std::string& e, Fighter& f, Fighter& p2) const;
-  void runCtrl(const CnsCtrl& c, int idx, Fighter& f, Fighter& p2);
-  void parseHitDef(const CnsCtrl& c, Fighter& f);
 };

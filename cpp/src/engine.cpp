@@ -1,5 +1,4 @@
 #include "engine.hpp"
-#include "log.hpp"
 #include "stage.hpp"
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
@@ -77,7 +76,6 @@ bool Engine::Init(int argc, char** argv) {
   std::string relayHost;
   int relayPort = 9000;
   std::string room = "kfm1";
-  bool wantLog = false;
   for (int i = 1; i < argc; i++) {
     if (!std::strcmp(argv[i], "--host")) mode_ = "host";
     else if (!std::strcmp(argv[i], "--connect") && i + 1 < argc) {
@@ -98,24 +96,28 @@ bool Engine::Init(int argc, char** argv) {
       } else relayHost = r;
     } else if (!std::strcmp(argv[i], "--room") && i + 1 < argc) {
       room = argv[++i];
-    } else if (!std::strcmp(argv[i], "--autohit")) {
-      autoHit_ = true;
-    } else if (!std::strcmp(argv[i], "--log")) {
-      wantLog = true;
     }
   }
-  if (!relayHost.empty()) delayNet_.SetRelay(relayHost, relayPort, room);
+  if (!relayHost.empty()) {
+    relayHost_ = relayHost;
+    relayPort_ = relayPort;
+  }
+  roomName_ = room;
   std::string root = repoRoot();
 #ifdef _WIN32
   SetCurrentDirectoryA(root.c_str());
 #endif
   std::srand((unsigned)std::time(nullptr));
-  GameLog::Get().Open(root, mode_, wantLog);
+  inputLog_ = std::fopen("input.log", "w");
+  if (inputLog_) {
+    std::fprintf(inputLog_, "# key/button log  P1: WASD move  Y=x H=y J=a K=b  Space=start\n");
+    std::fflush(inputLog_);
+  }
 
   SDL_SetHint(SDL_HINT_IME_SHOW_UI, "0");
   SDL_SetMainReady();
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_EVENTS) != 0) {
-    GameLog::Get().Error("SDL: %s", SDL_GetError());
+    std::fprintf(stderr, "SDL: %s\n", SDL_GetError());
 #ifdef _WIN32
     MessageBoxA(nullptr, SDL_GetError(), "Ikemen SDL init failed", MB_OK);
 #endif
@@ -169,13 +171,13 @@ bool Engine::Init(int argc, char** argv) {
   std::string sff = root + "/chars/kfm/kfm.sff";
   std::string air = root + "/chars/kfm/kfm.air";
   std::string cmd = root + "/chars/kfm/kfm.cmd";
-  if (!sff_.Load(sff)) GameLog::Get().Warn("sff load failed %s", sff.c_str());
-  if (!air_.Load(air)) GameLog::Get().Warn("air load failed %s", air.c_str());
+  if (!sff_.Load(sff)) std::fprintf(stderr, "warn: sff load failed %s\n", sff.c_str());
+  if (!air_.Load(air)) std::fprintf(stderr, "warn: air load failed %s\n", air.c_str());
   if (!stage_.Load(root + "/stages/kfm.def"))
-    GameLog::Get().Warn("stage load failed");
+    std::fprintf(stderr, "warn: stage load failed\n");
   cam_.Setup(stage_.boundleft, stage_.boundright, stage_.tension);
   if (!hud_.Load(root + "/data/fight.sff"))
-    GameLog::Get().Warn("fight.sff load failed");
+    std::fprintf(stderr, "warn: fight.sff load failed\n");
   title_.Load(root + "/data/ikemen1");
 
   p1_.playerIndex = 0;
@@ -187,30 +189,23 @@ bool Engine::Init(int argc, char** argv) {
   p1_.cmd.LoadFile(cmd);
   p2_.cmd.LoadFile(cmd);
   cns_.LoadFile(root + "/chars/kfm/kfm.cns");
-  cns_.LoadFile(root + "/chars/kfm/kfm.cmd");
-  cns_.LoadZss(root + "/data/common1.cns.zss");
   cns_.world = &world_;
   p1_.cns = p2_.cns = &cns_;
   p1_.Reset(1, stage_.p1startx, stage_.p1starty);
   p2_.Reset(2, stage_.p2startx, stage_.p2starty);
   p1_.snap.facing = stage_.p1facing;
   p2_.snap.facing = stage_.p2facing;
-  cns_.Enter(p1_, 0, 1);
-  cns_.Enter(p2_, 0, 1);
+  cns_.Enter(p1_, State::Stand, 1);
+  cns_.Enter(p2_, State::Stand, 1);
 
   lua_.Init();
   lua_.LoadFile((root + "/cpp/lua/chars/kfm.lua").c_str());
   lua_.LoadFile((root + "/cpp/lua/common/training.lua").c_str());
 
   if (mode_ == "host") {
-    if (!delayNet_.Listen(7500)) return false;
-    screen_ = kNetWait;
-    gameMode_ = "versus";
+    if (!beginRoom(true)) return false;
   } else if (mode_ == "connect") {
-    std::string ip = connectIp_.empty() ? "127.0.0.1" : connectIp_;
-    if (!delayNet_.BeginConnect(ip, 7500)) return false;
-    screen_ = kNetWait;
-    gameMode_ = "versus";
+    if (!beginRoom(false)) return false;
   } else if (mode_ == "rollback") {
     std::string ip = connectIp_.empty() ? "127.0.0.1" : connectIp_;
     if (!ggpo_.Init(this, 7550, 7600, ip, false, 2)) return false;
@@ -222,23 +217,83 @@ bool Engine::Init(int argc, char** argv) {
     screen_ = kNetWait;
     gameMode_ = "versus";
   }
-  if (autoHit_) {
-    training_ = true;
-    gameMode_ = "training";
-    p1AiLevel_ = 0;
-    p2AiLevel_ = 0;
-    ResetMatch();
-    screen_ = kFight;
-  }
+  return true;
+}
+
+bool Engine::beginRoom(bool host) {
+  std::string ip = host ? relayHost_ : (connectIp_.empty() ? relayHost_ : connectIp_);
+  if (!room_.Start(host, ip, relayPort_, roomName_)) return false;
+  screen_ = kNetWait;
+  gameMode_ = "versus";
+  training_ = false;
+  std::fprintf(stderr, "room %s %s:%d %.8s (need ikemen_relay)\n", host ? "host" : "guest", ip.c_str(),
+               relayPort_, roomName_.c_str());
   return true;
 }
 
 void Engine::DetectHits() {
+  if (world_.RoundNoDamage()) return;
+  if (world_.finishType != FinishType::NotYet && world_.intro < -world_.overHitTime) return;
   cns_.GlobalCollision(p1_, p2_);
 }
 
+void Engine::StepFightWithInputs(uint32_t i1, uint32_t i2, bool netOn) {
+  p1_.snap.input = i1;
+  p2_.snap.input = i2;
+
+  auto autoTurn = [](Fighter& a, Fighter& b) {
+    if (a.snap.asf & ASF_noautoturn) return;
+    int st = a.snap.state;
+    bool ok = a.snap.ctrl && StateAllowsAutoTurn(st, a.snap.animEnded != 0);
+    if (!ok) return;
+    int want = a.snap.pos.x > b.snap.pos.x ? -1 : 1;
+    if (want != a.snap.facing) a.snap.facing = want;
+  };
+  autoTurn(p1_, p2_);
+  autoTurn(p2_, p1_);
+
+  p1_.cmd.Push(i1 | p1_.snap.assertInput, p1_.snap.facing);
+  p2_.cmd.Push(i2 | p2_.snap.assertInput, p2_.snap.facing);
+  if (!netOn) {
+    if (p1AiLevel_ > 0 && !(p1_.snap.asf & ASF_noaicheat)) p1_.cmd.Cheat(p1AiLevel_);
+    if (p2AiLevel_ > 0 && !(p2_.snap.asf & ASF_noaicheat)) p2_.cmd.Cheat(p2AiLevel_);
+  }
+
+  i1hist_[(unsigned)frame_ & 255] = i1;
+  i2hist_[(unsigned)frame_ & 255] = i2;
+
+  SimulateFight();
+  if (ggpo_.Active()) {
+    ggpo_.AdvanceFrame(rbStore_.Checksum(p1_.snap, p2_.snap));
+    frame_ = ggpo_.Frame();
+  }
+  if (inputLog_ && !room_.Active()) {
+    auto fired = p1_.cmd.Fired();
+    uint32_t bits = p1_.snap.input;
+    bool cmdchg = !fired.empty();
+    if (bits != lastLogBits_ || p1_.snap.state != lastLogState_ || cmdchg || !input_.KeyEvents().empty()) {
+      std::fprintf(inputLog_,
+                   "f=%d fight P1 keys=%s cmds=", frame_, bitsStr(bits).c_str());
+      if (fired.empty()) std::fprintf(inputLog_, "-");
+      else {
+        for (size_t i = 0; i < fired.size(); i++) {
+          if (i) std::fprintf(inputLog_, ",");
+          std::fprintf(inputLog_, "%s", fired[i].c_str());
+        }
+      }
+      std::fprintf(inputLog_, " state=%d ctrl=%d type=%c vel=%.2f,%.2f pos=%.1f,%.1f pause=%d\n",
+                   p1_.snap.state, p1_.snap.ctrl, p1_.snap.stateType,
+                   p1_.snap.vel.x, p1_.snap.vel.y, p1_.snap.pos.x, p1_.snap.pos.y, p1_.snap.hitpause);
+      std::fflush(inputLog_);
+      lastLogBits_ = bits;
+      lastLogState_ = p1_.snap.state;
+    }
+  }
+  if (!ggpo_.Active()) frame_++;
+}
+
 void Engine::ResetMatch() {
-  world_.Clear();
+  world_.ResetMatch();
   p1_.Reset(1, stage_.p1startx, stage_.p1starty);
   p2_.Reset(2, stage_.p2startx, stage_.p2starty);
   p1_.id = 0;
@@ -247,26 +302,90 @@ void Engine::ResetMatch() {
   p1_.helperIndex = p2_.helperIndex = 0;
   p1_.snap.facing = stage_.p1facing;
   p2_.snap.facing = stage_.p2facing;
-  cns_.Enter(p1_, 0, 1);
-  cns_.Enter(p2_, 0, 1);
+  cns_.Enter(p1_, State::Stand, 1);
+  cns_.Enter(p2_, State::Stand, 1);
   frame_ = 0;
+}
+
+void Engine::NextRound() {
+  int w0 = world_.wins[0], w1 = world_.wins[1], rn = world_.roundNo + 1;
+  world_.ResetRound();
+  world_.wins[0] = w0;
+  world_.wins[1] = w1;
+  world_.roundNo = rn;
+  p1_.Reset(1, stage_.p1startx, stage_.p1starty);
+  p2_.Reset(2, stage_.p2startx, stage_.p2starty);
+  p1_.id = 0;
+  p2_.id = 1;
+  p1_.snap.facing = stage_.p1facing;
+  p2_.snap.facing = stage_.p2facing;
+  cns_.Enter(p1_, State::Stand, 1);
+  cns_.Enter(p2_, State::Stand, 1);
+}
+
+void Engine::StepRoundState() {
+  FinishType before = world_.finishType;
+  if (world_.finishType == FinishType::NotYet) {
+    bool ko0 = !p1_.snap.alive || p1_.snap.life <= 0;
+    bool ko1 = !p2_.snap.alive || p2_.snap.life <= 0;
+    if (ko0 || ko1) {
+      if (ko0 && ko1) {
+        world_.finishType = FinishType::DKO;
+        world_.winTeam = -1;
+      } else {
+        world_.finishType = FinishType::KO;
+        world_.winTeam = ko0 ? 1 : 0;
+      }
+    }
+  }
+  if (before == FinishType::NotYet && world_.finishType != FinishType::NotYet) {
+    if (world_.winTeam == 0) world_.wins[0]++;
+    else if (world_.winTeam == 1) world_.wins[1]++;
+    if (world_.wins[0] >= world_.roundsToWin || world_.wins[1] >= world_.roundsToWin)
+      world_.matchOver = 1;
+  }
+  if (world_.finishType != FinishType::NotYet) world_.intro--;
+  if (world_.RoundOver()) {
+    if (world_.matchOver) {
+      delayNet_.Close();
+      room_.Close();
+      screen_ = kTitle;
+    } else {
+      NextRound();
+    }
+  }
 }
 
 void Engine::Tick() {
   input_.Poll();
-  if (GameLog::Get().FightOn()) {
+  if (inputLog_) {
     for (auto& ev : input_.KeyEvents())
-      GameLog::Get().Fight("f=%d key %s", frame_, ev.c_str());
+      std::fprintf(inputLog_, "f=%d key %s\n", frame_, ev.c_str());
     if (input_.Clicked())
-      GameLog::Get().Fight("f=%d click %d,%d screen=%s", frame_, input_.ClickX(), input_.ClickY(),
-                           screen_ == kTitle ? "title" : "fight");
+      std::fprintf(inputLog_, "f=%d click %d,%d screen=%s\n", frame_, input_.ClickX(), input_.ClickY(),
+                   screen_ == kTitle ? "title" : "fight");
   }
   if (input_.Quit()) running_ = false;
   if (screen_ == kNetWait) {
     if (input_.EscPressed()) {
       delayNet_.Close();
+      room_.Close();
       ggpo_.Close();
       screen_ = kTitle;
+      return;
+    }
+    if (room_.Active()) {
+      room_.Pump();
+      if (room_.Dropped()) {
+        room_.Close();
+        screen_ = kTitle;
+        return;
+      }
+      if (room_.Joined()) {
+        std::srand(room_.Seed());
+        ResetMatch();
+        screen_ = kFight;
+      }
       return;
     }
     if (ggpo_.Active() && (mode_ == "rollback" || mode_ == "rollback-host")) {
@@ -307,7 +426,8 @@ void Engine::Tick() {
         if (h != NetPump::Pending) break;
       }
       if (h == NetPump::Ready) {
-        GameLog::Get().Info("delay handshake ready, entering fight");
+        std::fprintf(stderr, "delay handshake ready, entering fight\n");
+        std::fflush(stderr);
         std::srand(delayNet_.Seed());
         ResetMatch();
         screen_ = kFight;
@@ -322,34 +442,20 @@ void Engine::Tick() {
       int m = title_.FightMenu();
       p1AiLevel_ = 0;
       p2AiLevel_ = 0;
-      if (m == 2) gameMode_ = "versus";
-      else if (m == 4) gameMode_ = "training";
-      else if (m == 6) {
+      if (m == TitleMenu::Versus) gameMode_ = "versus";
+      else if (m == TitleMenu::Practice) gameMode_ = "training";
+      else if (m == TitleMenu::Watch) {
         gameMode_ = "watch";
         p1AiLevel_ = 4.f;
         p2AiLevel_ = 4.f;
-      } else if (m == 31 || m == 32) {
+      } else         if (m == TitleMenu::HostNet || m == TitleMenu::JoinNet) {
         gameMode_ = "versus";
-        if (m == 31) {
-          if (!delayNet_.Listen(7500)) {
+        if (!beginRoom(m == TitleMenu::HostNet)) {
 #ifdef _WIN32
-            MessageBoxA(nullptr, "Cannot listen on port 7500.", "Ikemen net", MB_OK);
-#endif
-            return;
-          }
-          training_ = false;
-          screen_ = kNetWait;
-          return;
-        }
-        std::string ip = connectIp_.empty() ? "127.0.0.1" : connectIp_;
-        if (!delayNet_.BeginConnect(ip, 7500)) {
-#ifdef _WIN32
-          MessageBoxA(nullptr, "Join failed (need a host on 7500).", "Ikemen net", MB_OK);
+          MessageBoxA(nullptr, "Cannot start room sync (UDP).", "Ikemen net", MB_OK);
 #endif
           return;
         }
-        training_ = false;
-        screen_ = kNetWait;
         return;
       } else {
         gameMode_ = "arcade";
@@ -367,19 +473,13 @@ void Engine::Tick() {
   }
   if (input_.EscPressed()) {
     delayNet_.Close();
+    room_.Close();
     screen_ = kTitle;
     return;
   }
   uint32_t i1 = input_.P1();
   uint32_t i2 = input_.P2();
-  if (autoHit_ && screen_ == kFight) {
-    if (frame_ < 80) i1 = kInputR;
-    else if ((frame_ % 50) < 8) i1 = kInputA;
-    else i1 = 0;
-    i2 = 0;
-    if (frame_ >= 420) running_ = false;
-  }
-  bool netOn = delayNet_.Active() || ggpo_.Active();
+  bool netOn = delayNet_.Active() || ggpo_.Active() || room_.Active();
   if (!netOn) {
     if (p1AiLevel_ > 0) {
       p1ai_.Update(p1AiLevel_);
@@ -389,6 +489,22 @@ void Engine::Tick() {
       p2ai_.Update(p2AiLevel_);
       i2 = p2ai_.Bits();
     }
+  }
+  if (room_.Active()) {
+    room_.Pump();
+    if (room_.Dropped()) {
+      room_.Close();
+      screen_ = kTitle;
+      return;
+    }
+    room_.SendInput(frame_, input_.P1());
+    int n = 0;
+    uint32_t p0 = 0, p1 = 0;
+    while (n < 90 && room_.NextConfirm(p0, p1)) {
+      StepFightWithInputs(p0, p1, true);
+      n++;
+    }
+    return;
   }
   if (delayNet_.Synced()) {
     uint32_t locPlay = i1, remPlay = 0;
@@ -421,84 +537,25 @@ void Engine::Tick() {
     i2 = (uint32_t)ins[1][0] | ((uint32_t)ins[1][1] << 8);
   }
 
-  p1_.snap.input = i1;
-  p2_.snap.input = i2;
-
-  auto autoTurn = [](Fighter& a, Fighter& b) {
-    // Go commandUpdate autoTurn: ctrl (or roundState>2) and states 0/11/20/52
-    if (a.snap.asf & ASF_noautoturn) return;
-    int st = a.snap.state;
-    bool ok = a.snap.ctrl && (st == 0 || st == 11 || st == 20 || (st == 52 && a.snap.animEnded));
-    if (!ok) return;
-    int want = a.snap.pos.x > b.snap.pos.x ? -1 : 1;
-    if (want != a.snap.facing) a.snap.facing = want;
-  };
-  autoTurn(p1_, p2_);
-  autoTurn(p2_, p1_);
-
-  p1_.cmd.Push(i1 | p1_.snap.assertInput, p1_.snap.facing);
-  p2_.cmd.Push(i2 | p2_.snap.assertInput, p2_.snap.facing);
-  if (!netOn) {
-    if (p1AiLevel_ > 0 && !(p1_.snap.asf & ASF_noaicheat)) p1_.cmd.Cheat(p1AiLevel_);
-    if (p2AiLevel_ > 0 && !(p2_.snap.asf & ASF_noaicheat)) p2_.cmd.Cheat(p2AiLevel_);
-  }
-  cns_.ActionPrepare(p1_);
-  cns_.ActionPrepare(p2_);
-
-  i1hist_[(unsigned)frame_ & 255] = i1;
-  i2hist_[(unsigned)frame_ & 255] = i2;
-
-  SimulateFight();
-  if (ggpo_.Active()) {
-    ggpo_.AdvanceFrame(rbStore_.Checksum(p1_.snap, p2_.snap));
-    frame_ = ggpo_.Frame();
-  }
-  if (GameLog::Get().FightOn()) {
-    auto fired = p1_.cmd.Fired();
-    uint32_t bits = p1_.snap.input;
-    bool cmdchg = !fired.empty();
-    if (bits != lastLogBits_ || p1_.snap.state != lastLogState_ || p2_.snap.state != lastLogState2_ ||
-        cmdchg || !input_.KeyEvents().empty()) {
-      char cmds[128];
-      cmds[0] = 0;
-      if (fired.empty()) std::snprintf(cmds, sizeof(cmds), "-");
-      else {
-        size_t off = 0;
-        for (size_t i = 0; i < fired.size() && off + 16 < sizeof(cmds); i++) {
-          int n = std::snprintf(cmds + off, sizeof(cmds) - off, "%s%s", i ? "," : "", fired[i].c_str());
-          if (n > 0) off += (size_t)n;
-        }
-      }
-      GameLog::Get().Fight(
-          "f=%d P1 keys=%s cmds=%s st=%d ctrl=%d t=%c vel=%.2f,%.2f pos=%.1f,%.1f pause=%d | P2 st=%d vel=%.2f,%.2f pos=%.1f,%.1f pause=%d life=%d",
-          frame_, bitsStr(bits).c_str(), cmds,
-          p1_.snap.state, p1_.snap.ctrl, p1_.snap.stateType,
-          p1_.snap.vel.x, p1_.snap.vel.y, p1_.snap.pos.x, p1_.snap.pos.y, p1_.snap.hitpause,
-          p2_.snap.state, p2_.snap.vel.x, p2_.snap.vel.y, p2_.snap.pos.x, p2_.snap.pos.y,
-          p2_.snap.hitpause, p2_.snap.life);
-      lastLogBits_ = bits;
-      lastLogState_ = p1_.snap.state;
-      lastLogState2_ = p2_.snap.state;
-    }
-  }
-  if (!ggpo_.Active()) frame_++;
+  StepFightWithInputs(i1, i2, netOn);
 }
 
 void Engine::SimulateFight() {
   auto step = [&](Fighter& f, Fighter& o) {
     cns_.ApplyQueuedDamage(f);
     if (f.snap.hitpause > 0) f.snap.hitpause--;
-    if (f.snap.hitpause <= 0) f.snap.time++;
     f.snap.asf = 0;
-    cns_.RunMinusOne(f, o);
-    cns_.RunCurrent(f, o);
+    if (f.snap.hitpause <= 0) {
+      int st0 = f.snap.state;
+      lua_.CallState(f, &o);
+      // MUGEN Time=0 on the first tick of a new state; don't bump if ChangeState just reset it.
+      if (f.snap.state == st0) f.snap.time++;
+    }
+    cns_.ActionFinish(f);
   };
   step(p1_, p2_);
   step(p2_, p1_);
-  size_t nhelp = world_.helpers.size();
-  if (nhelp > (size_t)world_.helperMax) nhelp = (size_t)world_.helperMax;
-  for (size_t i = 0; i < nhelp; i++) {
-    Fighter& h = world_.helpers[i];
+  for (auto& h : world_.helpers) {
     if (h.helperIndex == 0) continue;
     Fighter& o = (h.playerIndex == 0) ? p2_ : p1_;
     step(h, o);
@@ -519,14 +576,15 @@ void Engine::SimulateFight() {
   world_.popups.erase(std::remove_if(world_.popups.begin(), world_.popups.end(),
                                      [](const DamagePopup& p) { return p.ttl <= 0; }),
                       world_.popups.end());
-  if (p1_.snap.moveType != 'A' && p1_.snap.moveType != 'H' && p1_.snap.ctrl)
+  if (p1_.snap.moveType != MoveType::Attack && p1_.snap.moveType != MoveType::Hit && p1_.snap.ctrl)
     world_.comboHits[0] = world_.comboDmg[0] = 0;
-  if (p2_.snap.moveType != 'A' && p2_.snap.moveType != 'H' && p2_.snap.ctrl)
+  if (p2_.snap.moveType != MoveType::Attack && p2_.snap.moveType != MoveType::Hit && p2_.snap.ctrl)
     world_.comboHits[1] = world_.comboDmg[1] = 0;
   cns_.TickProjectiles(p1_, p2_, stage_.leftbound, stage_.rightbound);
   p1_.TickAnim();
   p2_.TickAnim();
   cam_.Update(p1_, p2_);
+  StepRoundState();
 }
 
 void Engine::DrawFight() {
@@ -589,16 +647,7 @@ void Engine::DrawFight() {
 }
 
 void Engine::Run() {
-  const uint32_t frameMs = 16;
-  uint32_t next = SDL_GetTicks();
   while (running_) {
-    uint32_t now = SDL_GetTicks();
-    int32_t wait = (int32_t)(next - now);
-    if (wait > 0) {
-      SDL_Delay((uint32_t)wait);
-      continue;
-    }
-    if ((int32_t)(now - next) > 80) next = now;
     Tick();
     if (screen_ == kTitle) {
       render_.Begin(1280.f, 720.f);
@@ -606,24 +655,25 @@ void Engine::Run() {
       render_.End();
     } else if (screen_ == kNetWait) {
       render_.Begin(1280.f, 720.f);
-      title_.DrawWait(render_, ggpo_.Active() ? ggpo_.WaitLabel() : delayNet_.WaitLabel());
+      title_.DrawWait(render_, room_.Active() ? room_.WaitLabel() : (ggpo_.Active() ? ggpo_.WaitLabel() : delayNet_.WaitLabel()));
       render_.End();
     } else {
       DrawFight();
     }
     SDL_GL_SwapWindow(gWin);
-    next += frameMs;
+    SDL_Delay(8);
   }
 }
 
 void Engine::Shutdown() {
   delayNet_.Close();
+  room_.Close();
   ggpo_.Close();
   lua_.Shutdown();
   render_.Shutdown();
   if (gCtx) SDL_GL_DeleteContext(gCtx);
   if (gWin) SDL_DestroyWindow(gWin);
-  GameLog::Get().Close();
+  if (inputLog_) { std::fclose(inputLog_); inputLog_ = nullptr; }
   SDL_Quit();
 }
 
@@ -647,8 +697,6 @@ void Engine::AdvanceFrame(int) {
   p2_.snap.input = i2;
   p1_.cmd.Push(i1 | p1_.snap.assertInput, p1_.snap.facing);
   p2_.cmd.Push(i2 | p2_.snap.assertInput, p2_.snap.facing);
-  cns_.ActionPrepare(p1_);
-  cns_.ActionPrepare(p2_);
   SimulateFight();
   ggpo_.AdvanceFrame(rbStore_.Checksum(p1_.snap, p2_.snap));
   frame_ = ggpo_.Frame();

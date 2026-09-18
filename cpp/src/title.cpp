@@ -4,12 +4,12 @@
 #include <cstring>
 
 static const TitleScreen::Item kRoot[] = {
-  {"ARCADE", TitleScreen::Sub, 1},
-  {"VS MODE", TitleScreen::Sub, 2},
-  {"NETWORK", TitleScreen::Sub, 3},
-  {"PRACTICE", TitleScreen::Sub, 4},
-  {"MISSION", TitleScreen::Sub, 5},
-  {"WATCH MODE", TitleScreen::Sub, 6},
+  {"ARCADE", TitleScreen::Sub, +TitleMenu::Arcade},
+  {"VS MODE", TitleScreen::Sub, +TitleMenu::Versus},
+  {"NETWORK", TitleScreen::Sub, +TitleMenu::Network},
+  {"PRACTICE", TitleScreen::Sub, +TitleMenu::Practice},
+  {"MISSION", TitleScreen::Sub, +TitleMenu::Mission},
+  {"WATCH MODE", TitleScreen::Sub, +TitleMenu::Watch},
   {"OPTIONS", TitleScreen::Ignore, -1},
   {"EXIT", TitleScreen::ExitGame, -1},
 };
@@ -113,12 +113,12 @@ const std::vector<TitleScreen::Item>& TitleScreen::items() const {
   static std::vector<Item> buf;
   const Item* p = kRoot;
   int n = (int)(sizeof(kRoot) / sizeof(kRoot[0]));
-  if (menu_ == 1) { p = kArcade; n = (int)(sizeof(kArcade) / sizeof(kArcade[0])); }
-  else if (menu_ == 2) { p = kVersus; n = (int)(sizeof(kVersus) / sizeof(kVersus[0])); }
-  else if (menu_ == 3) { p = kNet; n = (int)(sizeof(kNet) / sizeof(kNet[0])); }
-  else if (menu_ == 4) { p = kPrac; n = (int)(sizeof(kPrac) / sizeof(kPrac[0])); }
-  else if (menu_ == 5) { p = kMission; n = (int)(sizeof(kMission) / sizeof(kMission[0])); }
-  else if (menu_ == 6) { p = kWatch; n = (int)(sizeof(kWatch) / sizeof(kWatch[0])); }
+  if (menu_ == TitleMenu::Arcade) { p = kArcade; n = (int)(sizeof(kArcade) / sizeof(kArcade[0])); }
+  else if (menu_ == TitleMenu::Versus) { p = kVersus; n = (int)(sizeof(kVersus) / sizeof(kVersus[0])); }
+  else if (menu_ == TitleMenu::Network) { p = kNet; n = (int)(sizeof(kNet) / sizeof(kNet[0])); }
+  else if (menu_ == TitleMenu::Practice) { p = kPrac; n = (int)(sizeof(kPrac) / sizeof(kPrac[0])); }
+  else if (menu_ == TitleMenu::Mission) { p = kMission; n = (int)(sizeof(kMission) / sizeof(kMission[0])); }
+  else if (menu_ == TitleMenu::Watch) { p = kWatch; n = (int)(sizeof(kWatch) / sizeof(kWatch[0])); }
   buf.assign(p, p + n);
   return buf;
 }
@@ -161,10 +161,10 @@ TitleScreen::Action TitleScreen::Tick(uint32_t pressed, bool escPressed, float d
   auto activate = [&]() -> Action {
     const Item& sel = it[cursor_];
     if (sel.kind == Sub) { menu_ = sel.sub; cursor_ = 0; scroll_ = 0; }
-    else if (sel.kind == Back) { menu_ = 0; cursor_ = 0; scroll_ = 0; }
-    else if (sel.kind == Fight) { fightMenu_ = menu_; menu_ = 0; cursor_ = 0; return StartFight; }
-    else if (sel.kind == HostNet) { fightMenu_ = 31; menu_ = 0; cursor_ = 0; return StartFight; }
-    else if (sel.kind == JoinNet) { fightMenu_ = 32; menu_ = 0; cursor_ = 0; return StartFight; }
+    else if (sel.kind == Back) { menu_ = +TitleMenu::Root; cursor_ = 0; scroll_ = 0; }
+    else if (sel.kind == Fight) { fightMenu_ = menu_; menu_ = +TitleMenu::Root; cursor_ = 0; return StartFight; }
+    else if (sel.kind == HostNet) { fightMenu_ = +TitleMenu::HostNet; menu_ = +TitleMenu::Root; cursor_ = 0; return StartFight; }
+    else if (sel.kind == JoinNet) { fightMenu_ = +TitleMenu::JoinNet; menu_ = +TitleMenu::Root; cursor_ = 0; return StartFight; }
     else if (sel.kind == ExitGame) return Quit;
     return None;
   };
@@ -179,7 +179,7 @@ TitleScreen::Action TitleScreen::Tick(uint32_t pressed, bool escPressed, float d
     }
   }
   if ((pressed & kInputA) || (pressed & kInputS)) return activate();
-  if (escPressed && menu_ != 0) { menu_ = 0; cursor_ = 0; scroll_ = 0; }
+  if (escPressed && menu_ != TitleMenu::Root) { menu_ = +TitleMenu::Root; cursor_ = 0; scroll_ = 0; }
   return None;
 }
 
@@ -208,7 +208,7 @@ void TitleScreen::Draw(Renderer& r) {
 void TitleScreen::DrawWait(Renderer& r, const char* msg) {
   r.DrawRect(0, 0, 1280, 720, 0.08f, 0.08f, 0.12f, 1);
   drawText(r, 640, 220, msg ? msg : "WAITING", 1, 1, 1, 0);
-  drawText(r, 640, 300, "LOOK FOR WINDOW TITLE  HOST / CLIENT", 0.9f, 0.9f, 0.7f, 0);
+  drawText(r, 640, 300, "KCP ROOM  START ikemen_relay.exe  PORT 9000", 0.9f, 0.9f, 0.7f, 0);
   drawText(r, 640, 360, "CLIENT IS OFFSET TO THE RIGHT", 0.85f, 0.85f, 0.9f, 0);
   drawText(r, 640, 430, "ESC TO CANCEL", 0.8f, 0.8f, 0.8f, 0);
 }

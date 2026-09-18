@@ -1,5 +1,4 @@
 #include "engine.hpp"
-#include "log.hpp"
 #include <cstdio>
 #include <exception>
 #include <memory>
@@ -16,7 +15,7 @@ int main(int argc, char** argv) {
   try {
     auto e = std::make_unique<Engine>();
     if (!e->Init(argc, argv)) {
-      GameLog::Get().Error("init failed");
+      std::fprintf(stderr, "init failed\n");
 #ifdef _WIN32
       MessageBoxA(nullptr, "Init failed. Need OpenGL 3.3 and files next to the repo (chars, stages, data).",
                   "Ikemen GO", MB_OK);
@@ -26,7 +25,7 @@ int main(int argc, char** argv) {
     e->Run();
     e->Shutdown();
   } catch (const std::exception& ex) {
-    GameLog::Get().Error("crash: %s", ex.what());
+    std::fprintf(stderr, "crash: %s\n", ex.what());
 #ifdef _WIN32
     MessageBoxA(nullptr, ex.what(), "Ikemen GO crash", MB_OK);
 #endif

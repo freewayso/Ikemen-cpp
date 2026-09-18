@@ -1,5 +1,4 @@
 #include "rollback.hpp"
-#include "log.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -205,7 +204,7 @@ bool GgpoPeer::Init(GgpoSession* cb, int localPort, int remotePort, const std::s
   syncLeft_ = 5;
   lastSendMs_ = lastRecvMs_ = lastQualityMs_ = ggpoNow();
   sendSyncReq();
-  GameLog::Get().Info("GGPO (ikemen binary) local %d remote %s:%d host=%d delay=%d",
+  std::fprintf(stderr, "GGPO (ikemen binary) local %d remote %s:%d host=%d delay=%d\n",
                localPort, ip.empty() ? "127.0.0.1" : ip.c_str(), remotePort, (int)host, delay_);
   return true;
 }

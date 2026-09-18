@@ -1,8 +1,15 @@
 -- Training hooks (from data/training.zss). Options live on fighter:map().
 
+local RoundState = { Intro = 0, Fight = 2 }
+local DummyControl = { Cooperative = 0 }
+local GuardMode = { None = 0, AutoAfterHit = 1, Always = 2 }
+local Distance = { None = 0, Close = 1, Far = 3 }
+local DummyMode = { None = 0, Crouch = 1, Jump = 2 }
+local ButtonJam = { None = 0, A = 1 }
+
 function TrainingUpdate(self, roundState, gameMode)
   if gameMode ~= "training" then return end
-  if roundState == 0 then
+  if roundState == RoundState.Intro then
     self:powerSet(self:power())
     self:map("_iksys_trainingLifeTimer", 0)
     self:map("_iksys_trainingPowerTimer", 0)
@@ -28,28 +35,28 @@ function TrainingUpdate(self, roundState, gameMode)
   self:assertSpecial("noKo")
 
   if self:teamSide() ~= 2 then return end
-  if roundState ~= 2 then return end
+  if roundState ~= RoundState.Fight then return end
   local control = self:map("_iksys_trainingDummyControl")
-  if control ~= 0 then return end
+  if control ~= DummyControl.Cooperative then return end
 
   local guard = self:map("_iksys_trainingGuardMode")
-  if guard == 2 then
+  if guard == GuardMode.Always then
     self:assertSpecial("autoGuard")
-  elseif guard == 1 and self:moveTypeH() then
+  elseif guard == GuardMode.AutoAfterHit and self:moveTypeH() then
     self:assertSpecial("autoGuard")
   end
 
   local distMode = self:map("_iksys_trainingDistance")
-  if distMode == 1 then
+  if distMode == Distance.Close then
     self:assertInput("F")
-  elseif distMode == 3 then
+  elseif distMode == Distance.Far then
     self:assertInput("B")
   end
 
   local dummyMode = self:map("_iksys_trainingDummyMode")
-  if dummyMode == 1 then self:assertInput("D") end
-  if dummyMode == 2 then self:assertInput("U") end
+  if dummyMode == DummyMode.Crouch then self:assertInput("D") end
+  if dummyMode == DummyMode.Jump then self:assertInput("U") end
 
   local jam = self:map("_iksys_trainingButtonJam")
-  if jam == 1 then self:assertInput("a") end
+  if jam == ButtonJam.A then self:assertInput("a") end
 end
