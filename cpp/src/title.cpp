@@ -2,6 +2,7 @@
 #include "types.hpp"
 #include <algorithm>
 #include <cstring>
+#include <string>
 
 static const TitleScreen::Item kRoot[] = {
   {"ARCADE", TitleScreen::Sub, +TitleMenu::Arcade},
@@ -27,6 +28,7 @@ static const TitleScreen::Item kVersus[] = {
   {"BACK", TitleScreen::Back, -1},
 };
 static const TitleScreen::Item kNet[] = {
+  {"ONLINE", TitleScreen::Online, -1},
   {"HOST GAME", TitleScreen::HostNet, -1},
   {"JOIN GAME", TitleScreen::JoinNet, -1},
   {"BACK", TitleScreen::Back, -1},
@@ -99,6 +101,7 @@ static const uint8_t* glyph(char c) {
   if (c >= '0' && c <= '9') return kDig[c - '0'];
   if (c == '/') return sl;
   if (c == '-') return mn;
+  if (c == '_') return mn;
   return sp;
 }
 
@@ -165,6 +168,7 @@ TitleScreen::Action TitleScreen::Tick(uint32_t pressed, bool escPressed, float d
     else if (sel.kind == Fight) { fightMenu_ = menu_; menu_ = +TitleMenu::Root; cursor_ = 0; return StartFight; }
     else if (sel.kind == HostNet) { fightMenu_ = +TitleMenu::HostNet; menu_ = +TitleMenu::Root; cursor_ = 0; return StartFight; }
     else if (sel.kind == JoinNet) { fightMenu_ = +TitleMenu::JoinNet; menu_ = +TitleMenu::Root; cursor_ = 0; return StartFight; }
+    else if (sel.kind == Online) { fightMenu_ = +TitleMenu::Online; menu_ = +TitleMenu::Root; cursor_ = 0; return StartFight; }
     else if (sel.kind == ExitGame) return Quit;
     return None;
   };
@@ -183,11 +187,15 @@ TitleScreen::Action TitleScreen::Tick(uint32_t pressed, bool escPressed, float d
   return None;
 }
 
-void TitleScreen::Draw(Renderer& r) {
+void TitleScreen::Draw(Renderer& r, const char* user) {
   r.DrawRect(0, 0, 1280, 720, 0.55f, 0.72f, 0.88f, 1);
   r.DrawRect(0, 0, 1280, 90, 0.45f, 0.62f, 0.82f, 1);
   r.DrawRect(500, 250, 780, 400, 0.05f, 0.05f, 0.08f, 0.55f);
   drawText(r, 80, 30, "IKEMEN GO", 1, 1, 1, 1);
+  if (user && user[0]) {
+    std::string who = std::string("HI ") + user;
+    drawText(r, 1240, 30, who.c_str(), 1, 1, 1, -1);
+  }
 
   const auto& it = items();
   const int vis = 6;
@@ -205,10 +213,54 @@ void TitleScreen::Draw(Renderer& r) {
   drawText(r, 640, 696, "CLICK  UP/DOWN  ENTER/J  ESC", 0.8f, 0.8f, 0.8f, 0);
 }
 
-void TitleScreen::DrawWait(Renderer& r, const char* msg) {
+void TitleScreen::DrawWait(Renderer& r, const char* msg, const char* sub) {
   r.DrawRect(0, 0, 1280, 720, 0.08f, 0.08f, 0.12f, 1);
   drawText(r, 640, 220, msg ? msg : "WAITING", 1, 1, 1, 0);
-  drawText(r, 640, 300, "KCP ROOM  START ikemen_relay.exe  PORT 9000", 0.9f, 0.9f, 0.7f, 0);
+  drawText(r, 640, 300, sub && sub[0] ? sub : "data/net.ini  [Net] Relay=  Port=", 0.9f, 0.9f, 0.7f, 0);
   drawText(r, 640, 360, "CLIENT IS OFFSET TO THE RIGHT", 0.85f, 0.85f, 0.9f, 0);
   drawText(r, 640, 430, "ESC TO CANCEL", 0.8f, 0.8f, 0.8f, 0);
+}
+
+void TitleScreen::DrawLogin(Renderer& r, const std::string& user, const std::string& pass, int field, const char* status) {
+  r.DrawRect(0, 0, 1280, 720, 0.08f, 0.1f, 0.16f, 1);
+  r.DrawRect(0, 0, 1280, 90, 0.45f, 0.62f, 0.82f, 1);
+  drawText(r, 80, 30, "LOGIN", 1, 1, 1, 1);
+  drawText(r, 200, 200, "USER", 0.8f, 0.9f, 1, 1);
+  r.DrawRect(420, 188, 760, 48, field == 0 ? 0.2f : 0.05f, 0.25f, 0.35f, 0.9f);
+  drawText(r, 440, 200, user.empty() ? "_" : user.c_str(), 1, 1, 1, 1);
+  drawText(r, 200, 280, "PASS", 0.8f, 0.9f, 1, 1);
+  r.DrawRect(420, 268, 760, 48, field == 1 ? 0.2f : 0.05f, 0.25f, 0.35f, 0.9f);
+  std::string stars(pass.size(), '-');
+  drawText(r, 440, 280, stars.empty() ? "_" : stars.c_str(), 1, 1, 1, 1);
+  r.DrawRect(360, 360, 240, 56, 0.12f, 0.35f, 0.22f, 1);
+  drawText(r, 480, 376, "LOGIN", 1, 1, 1, 0);
+  r.DrawRect(680, 360, 280, 56, 0.35f, 0.22f, 0.12f, 1);
+  drawText(r, 820, 376, "REGISTER", 1, 1, 1, 0);
+  drawText(r, 640, 450, "TAB SWITCH  ENTER LOGIN", 0.75f, 0.8f, 0.85f, 0);
+  drawText(r, 640, 510, status && status[0] ? status : "USER ONLY OK", 1, 0.85f, 0.4f, 0);
+  r.DrawRect(0, 690, 1280, 30, 0, 0, 0.25f, 0.9f);
+  drawText(r, 640, 696, "ESC QUIT", 0.8f, 0.8f, 0.8f, 0);
+}
+
+void TitleScreen::DrawRooms(Renderer& r, const std::string& user, const std::vector<std::string>& rows, int cursor,
+                            const char* status) {
+  r.DrawRect(0, 0, 1280, 720, 0.08f, 0.1f, 0.16f, 1);
+  r.DrawRect(0, 0, 1280, 90, 0.45f, 0.62f, 0.82f, 1);
+  drawText(r, 80, 30, "ROOMS", 1, 1, 1, 1);
+  std::string who = "HI " + user;
+  drawText(r, 1240, 30, who.c_str(), 1, 1, 1, -1);
+  const int vis = 7;
+  int scroll = 0;
+  if (cursor >= vis) scroll = cursor - vis + 1;
+  if (rows.empty()) drawText(r, 640, 320, "NO ROOMS  PRESS C CREATE", 0.8f, 0.8f, 0.9f, 0);
+  for (int i = 0; i < vis && scroll + i < (int)rows.size(); i++) {
+    int idx = scroll + i;
+    float y = 160.f + i * 54.f;
+    bool on = idx == cursor;
+    r.DrawRect(80, y - 8, 1120, 48, on ? 0.15f : 0.05f, on ? 0.28f : 0.08f, on ? 0.4f : 0.12f, 0.85f);
+    drawText(r, 100, y, rows[idx].c_str(), 1, 1, 1, 1);
+  }
+  drawText(r, 640, 620, status && status[0] ? status : "", 1, 0.85f, 0.4f, 0);
+  r.DrawRect(0, 690, 1280, 30, 0, 0, 0.25f, 0.9f);
+  drawText(r, 640, 696, "ENTER JOIN   C CREATE   ESC", 0.8f, 0.8f, 0.8f, 0);
 }

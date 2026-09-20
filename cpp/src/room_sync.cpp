@@ -51,7 +51,7 @@ static int kcpOut(const char* buf, int len, ikcpcb*, void* user) {
 
 bool RoomSync::createKcp() {
   if (kcp_) return true;
-  uint32_t conv = host_ ? 0x4B465301u : 0x4B465302u;
+  uint32_t conv = fsRoomConv(room_, host_ ? 0 : 1);
   kcp_ = ikcp_create(conv, this);
   if (!kcp_) return false;
   ikcp_setoutput(kcp_, kcpOut);
@@ -99,6 +99,8 @@ bool RoomSync::Start(bool host, const std::string& ip, int port, const std::stri
   j.cmd = kFsJoin;
   j.role = host_ ? 0 : 1;
   std::memcpy(j.room, room_, 8);
+  std::snprintf(waitBuf_, sizeof(waitBuf_), "ROOM %s %s:%d", host_ ? "HOST" : "JOIN",
+                ip.empty() ? "127.0.0.1" : ip.c_str(), port);
   sendMsg(j);
   fsPrintSpec(host_ ? "host" : "guest");
   std::fprintf(stderr, "room-sync join %s %s:%d room %.8s\n", host_ ? "host" : "guest",
@@ -234,9 +236,16 @@ bool RoomSync::NextConfirm(uint32_t& p0, uint32_t& p1) {
   return true;
 }
 
+int RoomSync::RttMs() const {
+  if (!kcp_ || !joined_) return -1;
+  int ms = (int)kcp_->rx_srtt;
+  if (ms < 0) ms = 0;
+  return ms;
+}
+
 const char* RoomSync::WaitLabel() const {
   if (!active_) return "ROOM";
-  if (!joined_) return host_ ? "ROOM HOST  START RELAY :9000" : "ROOM JOIN  WAIT HOST";
+  if (!joined_) return waitBuf_[0] ? waitBuf_ : "ROOM WAIT";
   return "ROOM FRAME SYNC";
 }
 

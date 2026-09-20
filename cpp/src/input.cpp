@@ -29,15 +29,21 @@ static uint32_t scanBits(SDL_Scancode sc) {
 
 void InputSys::Poll() {
   clicked_ = false;
+  backspace_ = false;
+  tab_ = false;
+  text_.clear();
   keyEvents_.clear();
   uint32_t down = 0;
   bool escDown = false;
   SDL_Event e;
   while (SDL_PollEvent(&e)) {
     if (e.type == SDL_QUIT) quit_ = true;
+    if (e.type == SDL_TEXTINPUT && e.text.text[0]) text_ += e.text.text;
     if (e.type == SDL_KEYDOWN && !e.key.repeat) {
       down |= scanBits(e.key.keysym.scancode);
       if (e.key.keysym.scancode == SDL_SCANCODE_ESCAPE) escDown = true;
+      if (e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE) backspace_ = true;
+      if (e.key.keysym.scancode == SDL_SCANCODE_TAB) tab_ = true;
       const char* nm = SDL_GetScancodeName(e.key.keysym.scancode);
       keyEvents_.push_back(std::string("DOWN ") + (nm && *nm ? nm : "?"));
     }

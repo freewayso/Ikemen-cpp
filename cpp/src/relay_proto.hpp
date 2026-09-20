@@ -43,6 +43,16 @@ inline void rlPadRoom(char out[8], const char* room) {
   for (int i = 0; i < 8 && room[i]; i++) out[i] = room[i];
 }
 
+// Unique KCP conv per room + role so many rooms share one UDP port.
+inline uint32_t fsRoomConv(const char room[8], int role) {
+  uint32_t h = 2166136261u;
+  for (int i = 0; i < 8; i++) {
+    h ^= (uint8_t)room[i];
+    h *= 16777619u;
+  }
+  return 0x4B460000u | ((h & 0x7FFFu) << 1) | (uint32_t)(role ? 1 : 0);
+}
+
 inline bool rlIs(const unsigned char* p, int n) {
   return n >= 5 && p[0] == 'I' && p[1] == 'K' && p[2] == 'R' && p[3] == 'L';
 }
@@ -95,7 +105,7 @@ inline void fsPrintSpec(const char* who) {
                "  +22 4 b   CONFIRM=p1\n"
                "  +26 4 seed\n"
                "  +30 2 count  CATCHUP_PACK extra n*(frame,i0,i1) u32le\n"
-               "  KCP conv host=0x4B465301 guest=0x4B465302\n",
+               "  KCP conv = 0x4B460000 | (fnv(room)&0x7FFF)<<1 | role  (unique per room)\n",
                who ? who : "");
   std::fflush(stderr);
 }

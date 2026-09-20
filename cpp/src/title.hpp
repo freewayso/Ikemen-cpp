@@ -7,7 +7,7 @@
 class TitleScreen {
  public:
   enum Action { None, StartFight, Quit };
-  enum Kind { Sub, Fight, Back, ExitGame, Ignore, HostNet, JoinNet };
+  enum Kind { Sub, Fight, Back, ExitGame, Ignore, HostNet, JoinNet, Online };
   struct Item {
     const char* label;
     Kind kind;
@@ -16,8 +16,11 @@ class TitleScreen {
 
   bool Load(const std::string& motifDir);
   Action Tick(uint32_t pressed, bool escPressed, float dt, int mx, int my, bool click);
-  void Draw(Renderer& r);
-  void DrawWait(Renderer& r, const char* msg);
+  void Draw(Renderer& r, const char* user = nullptr);
+  void DrawWait(Renderer& r, const char* msg, const char* sub = nullptr);
+  void DrawLogin(Renderer& r, const std::string& user, const std::string& pass, int field, const char* status);
+  void DrawRooms(Renderer& r, const std::string& user, const std::vector<std::string>& rows, int cursor,
+                 const char* status);
   int FightMenu() const { return fightMenu_; }
 
  private:

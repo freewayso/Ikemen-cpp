@@ -27,6 +27,7 @@ enum class TitleMenu : int {
   Watch = 6,
   HostNet = 31,
   JoinNet = 32,
+  Online = 33,
 };
 
 enum class StateType : char { Stand = 'S', Crouch = 'C', Air = 'A', Lie = 'L' };

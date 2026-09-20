@@ -21,6 +21,7 @@ class RoomSync {
   uint32_t Seed() const { return seed_; }
   const char* WaitLabel() const;
   int WantFrame() const { return want_; }
+  int RttMs() const;
   int UdpSend(const char* buf, int len);
 
  private:
@@ -46,5 +47,6 @@ class RoomSync {
   uint32_t lastCatchMs_ = 0;
   uint32_t lastJoinMs_ = 0;
   uint32_t lastInputMs_ = 0;
+  char waitBuf_[96]{};
   std::map<int32_t, std::pair<uint32_t, uint32_t>> ready_;
 };

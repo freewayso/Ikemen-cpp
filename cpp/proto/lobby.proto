@@ -1,0 +1,86 @@
+syntax = "proto3";
+package ikemen.lobby;
+
+// TCP framing: uint32 little-endian payload size, then Envelope bytes.
+// Max payload 65536. Compatible with protobuf 3.x wire format.
+
+enum Msg {
+  MSG_UNSPECIFIED = 0;
+  C2S_REGISTER = 1;
+  C2S_LOGIN = 2;
+  C2S_LIST = 3;
+  C2S_CREATE = 4;
+  C2S_JOIN = 5;
+  C2S_LEAVE = 6;
+  S2C_HELLO = 10;
+  S2C_ERROR = 11;
+  S2C_LOGIN_OK = 12;
+  S2C_REGISTER_OK = 13;
+  S2C_ROOM_LIST = 14;
+  S2C_JOIN_OK = 15;
+  S2C_START = 16;
+  S2C_LEAVE_OK = 17;
+}
+
+message Envelope {
+  Msg type = 1;
+  bytes body = 2;
+}
+
+message AuthReq {
+  string user = 1;
+  string pass = 2;
+}
+
+message UserOk {
+  string user = 1;
+}
+
+message Error {
+  string code = 1;
+  string message = 2;
+}
+
+message JoinReq {
+  string room_id = 1;
+}
+
+message RoomInfo {
+  string id = 1;
+  string name = 2;
+  int32 players = 3;
+  int32 status = 4;  // 0=WAIT 1=FIGHT
+  string host = 5;
+  int32 max_players = 6;
+}
+
+message RoomList {
+  repeated RoomInfo rooms = 1;
+}
+
+message JoinOk {
+  string room_id = 1;
+  int32 role = 2;
+}
+
+message StartMatch {
+  string room_id = 1;
+  int32 role = 2;
+}
+
+message Hello {
+  string name = 1;
+  int32 proto = 2;
+}
+
+// On-disk account store (data/users.pb). File = magic IKUS + u32le len + UserStore + sha256(store).
+message Account {
+  string user = 1;
+  bytes salt = 2;
+  bytes pass_hash = 3;  // sha256(salt || pass), pass may be empty
+}
+
+message UserStore {
+  uint32 version = 1;
+  repeated Account users = 2;
+}

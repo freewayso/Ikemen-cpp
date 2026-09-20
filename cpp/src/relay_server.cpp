@@ -1,4 +1,5 @@
 #include "relay_proto.hpp"
+#include "ini.hpp"
 #include <cstdarg>
 #include <chrono>
 #include <cstdio>
@@ -17,6 +18,7 @@
 #pragma comment(lib, "ws2_32.lib")
 using socklen_t = int;
 #else
+#include <sys/types.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -62,6 +64,7 @@ struct RoomPlay {
   Sess* p[2]{};
   uint32_t seed = 1;
   int32_t confirmed = -1;
+  char id[8]{};
   struct Slot {
     uint32_t bits[2]{};
     uint8_t got = 0;
@@ -69,6 +72,8 @@ struct RoomPlay {
   std::map<int32_t, Slot> pending;
   std::deque<FrameRec> hist;
 };
+
+static const int kMaxRelayRooms = 128;
 
 static SOCKET gSock = INVALID_SOCKET;
 
@@ -183,7 +188,8 @@ static void tryConfirm(RoomPlay* rm) {
 }
 
 int main(int argc, char** argv) {
-  int port = 9000;
+  NetCfg net = LoadNetIni();
+  int port = net.port;
   if (argc > 1) port = std::atoi(argv[1]);
 #ifdef _WIN32
   WSADATA w;
@@ -204,12 +210,10 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "bind %d failed\n", port);
     return 1;
   }
-#ifdef _WIN32
   setvbuf(stdout, nullptr, _IONBF, 0);
   setvbuf(stderr, nullptr, _IONBF, 0);
-#endif
-  logf("Ikemen KCP room frame-sync on %d\n", port);
-  logf("waiting for host/guest JOIN (same --room)\n");
+  logf("Ikemen KCP multi-room relay UDP %d  max_rooms=%d\n", port, kMaxRelayRooms);
+  logf("each 8-char room id is an isolated 1v1 session\n");
   fsPrintSpec("relay");
 
   std::map<std::string, RoomFwd> fwd;
@@ -287,11 +291,21 @@ int main(int argc, char** argv) {
           std::string rk(m.room, m.room + 8);
           if (m.cmd == kFsJoin) {
             int role = m.role ? 1 : 0;
-            RoomPlay*& rp = plays[rk];
-            if (!rp) {
+            RoomPlay* rp = nullptr;
+            auto pit = plays.find(rk);
+            if (pit == plays.end()) {
+              if ((int)plays.size() >= kMaxRelayRooms) {
+                logf("join reject %.8s rooms full\n", m.room);
+                continue;
+              }
               rp = new RoomPlay();
               rp->seed = t ^ 0x9E3779B9u;
+              std::memcpy(rp->id, m.room, 8);
+              plays[rk] = rp;
+            } else {
+              rp = pit->second;
             }
+            if (!rp) continue;
             bool wasBoth = rp->p[0] && rp->p[1];
             Sess* prev = rp->p[role];
             if (prev && prev != s) prev->alive = false;
@@ -301,12 +315,13 @@ int main(int argc, char** argv) {
             rp->p[role] = s;
             bool reconnect = prev && prev != s;
             if (!prev || reconnect) {
-              logf("join room %.8s role=%s %s%s\n", m.room, role ? "guest" : "host", key.c_str(),
-                   reconnect ? " reconnect" : "");
+              logf("join room %.8s role=%s %s%s rooms=%d\n", m.room, role ? "guest" : "host", key.c_str(),
+                   reconnect ? " reconnect" : "", (int)plays.size());
             }
             bool nowBoth = rp->p[0] && rp->p[1];
             if (nowBoth && (!wasBoth || reconnect)) {
-              logf("ready room %.8s latest=%d seed=%u\n", m.room, (int)rp->confirmed, rp->seed);
+              logf("ready room %.8s latest=%d seed=%u fighting=%d\n", m.room, (int)rp->confirmed, rp->seed,
+                   (int)plays.size());
               FsMsg ok;
               ok.cmd = kFsJoinOk;
               ok.seed = rp->seed;
@@ -339,20 +354,20 @@ int main(int argc, char** argv) {
       if (!s || !s->kcp) continue;
       ikcp_update(s->kcp, t);
       ikcp_flush(s->kcp);
-      if (t - s->lastMs > 20000) s->alive = false;
+      if (t - s->lastMs > 90000) s->alive = false;
     }
     for (auto it = sessByAddr.begin(); it != sessByAddr.end();) {
       Sess* s = it->second;
       if (s && !s->alive) {
-        if (s->play) {
-          for (int i = 0; i < 2; i++) {
-            if (s->play->p[i] == s) s->play->p[i] = nullptr;
-            else if (s->play->p[i]) {
-              FsMsg d;
-              d.cmd = kFsDrop;
-              std::memcpy(d.room, s->room, 8);
-              sendFs(s->play->p[i], d);
-            }
+        if (s->play && s->role >= 0 && s->play->p[s->role] == s) {
+          s->play->p[s->role] = nullptr;
+          int other = s->role ^ 1;
+          if (s->play->p[other]) {
+            logf("drop room %.8s role=%d timeout\n", s->room, s->role);
+            FsMsg d;
+            d.cmd = kFsDrop;
+            std::memcpy(d.room, s->room, 8);
+            sendFs(s->play->p[other], d);
           }
         }
         if (s->kcp) ikcp_release(s->kcp);
@@ -361,6 +376,32 @@ int main(int argc, char** argv) {
       } else {
         ++it;
       }
+    }
+    for (auto it = plays.begin(); it != plays.end();) {
+      RoomPlay* rp = it->second;
+      if (rp && !rp->p[0] && !rp->p[1]) {
+        logf("close room %.8s hist=%d left=%d\n", it->first.c_str(), (int)rp->hist.size(),
+             (int)plays.size() - 1);
+        delete rp;
+        it = plays.erase(it);
+      } else {
+        ++it;
+      }
+    }
+    for (auto it = fwd.begin(); it != fwd.end();) {
+      RoomFwd& rm = it->second;
+      if (rm.host.ok && t - rm.host.lastMs > 90000) rm.host.ok = false;
+      if (rm.guest.ok && t - rm.guest.lastMs > 90000) rm.guest.ok = false;
+      if (!rm.host.ok && !rm.guest.ok) it = fwd.erase(it);
+      else ++it;
+    }
+    static uint32_t lastStat = 0;
+    if (t - lastStat > 5000) {
+      lastStat = t;
+      int fight = 0;
+      for (auto& kv : plays)
+        if (kv.second && kv.second->p[0] && kv.second->p[1]) fight++;
+      logf("relay rooms=%d fighting=%d sess=%d\n", (int)plays.size(), fight, (int)sessByAddr.size());
     }
   }
 }

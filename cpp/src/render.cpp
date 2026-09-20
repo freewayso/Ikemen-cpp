@@ -259,6 +259,14 @@ void Renderer::DrawWord(float x, float y, const char* word, float scale, float r
       case 'N': return "101111111101101";
       case 'D': return "110101101101110";
       case 'P': return "111101111100100";
+      case 'F': return "111100111100100";
+      case 'S': return "011100111001110";
+      case 'G': return "011100101101011";
+      case 'M': return "101111101101101";
+      case 'L': return "100100100100111";
+      case 'E': return "111100111100111";
+      case 'T': return "111010010010010";
+      case 'Y': return "101101010010010";
       case '1': return "001001001001001";
       case '2': return "111001111100111";
       default: return nullptr;

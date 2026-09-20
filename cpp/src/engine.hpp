@@ -13,6 +13,7 @@
 #include "stage.hpp"
 #include "title.hpp"
 #include "world.hpp"
+#include "lobby.hpp"
 #include <array>
 #include <cstdio>
 #include <string>
@@ -36,6 +37,9 @@ class Engine : public GgpoSession {
   void SimulateFight();
   void StepFightWithInputs(uint32_t i1, uint32_t i2, bool netOn);
   bool beginRoom(bool host);
+  bool beginLobby();
+  void leaveLobbyUi();
+  void backToLobby();
   std::string contentFingerprint() const;
   Renderer render_;
   Sff sff_;
@@ -53,7 +57,8 @@ class Engine : public GgpoSession {
   Stage stage_;
   TitleScreen title_;
   CnsBank cns_;
-  enum { kTitle, kFight, kNetWait };
+  LobbyClient lobby_;
+  enum { kTitle, kFight, kNetWait, kLogin, kRooms };
   int screen_ = kTitle;
   bool running_ = true;
   bool training_ = false;
@@ -63,6 +68,12 @@ class Engine : public GgpoSession {
   std::string relayHost_ = "127.0.0.1";
   int relayPort_ = 9000;
   std::string roomName_ = "kfm1";
+  std::string lobbyHost_ = "127.0.0.1";
+  int lobbyPort_ = 8080;
+  std::string loginUser_;
+  std::string loginPass_;
+  int loginField_ = 0;
+  int roomCursor_ = 0;
   FILE* inputLog_ = nullptr;
   uint32_t lastLogBits_ = 0xFFFFFFFFu;
   int lastLogState_ = -999;
@@ -72,4 +83,7 @@ class Engine : public GgpoSession {
   AiInput p1ai_, p2ai_;
   FightWorld world_;
   std::array<uint32_t, 256> i1hist_{}, i2hist_{};
+  int fpsShow_ = 0;
+  int fpsCount_ = 0;
+  uint32_t fpsMs_ = 0;
 };

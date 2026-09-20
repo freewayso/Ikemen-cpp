@@ -1,5 +1,6 @@
 #include "engine.hpp"
 #include "stage.hpp"
+#include "ini.hpp"
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include <SDL_syswm.h>
@@ -16,9 +17,11 @@
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
+#include <cctype>
 #include <string>
 #include <fstream>
 #include <array>
+#include <vector>
 
 static std::string bitsStr(uint32_t b) {
   std::string s;
@@ -74,19 +77,29 @@ std::string Engine::contentFingerprint() const {
 
 bool Engine::Init(int argc, char** argv) {
   std::string relayHost;
-  int relayPort = 9000;
-  std::string room = "kfm1";
+  int relayPort = 0;
+  std::string room;
+  bool roomArg = false;
+  std::string lobbyHostArg;
+  int lobbyPortArg = 0;
   for (int i = 1; i < argc; i++) {
     if (!std::strcmp(argv[i], "--host")) mode_ = "host";
-    else if (!std::strcmp(argv[i], "--connect") && i + 1 < argc) {
+    else if (!std::strcmp(argv[i], "--connect")) {
       mode_ = "connect";
-      connectIp_ = argv[++i];
+      if (i + 1 < argc && argv[i + 1][0] != '-') connectIp_ = argv[++i];
     } else if (!std::strcmp(argv[i], "--rbhost")) {
       mode_ = "rollback-host";
       if (i + 1 < argc && argv[i + 1][0] != '-') connectIp_ = argv[++i];
     } else if (!std::strcmp(argv[i], "--rollback") && i + 1 < argc) {
       mode_ = "rollback";
       connectIp_ = argv[++i];
+    } else if (!std::strcmp(argv[i], "--lobby") && i + 1 < argc) {
+      std::string r = argv[++i];
+      auto c = r.find(':');
+      if (c != std::string::npos) {
+        lobbyHostArg = r.substr(0, c);
+        lobbyPortArg = std::atoi(r.c_str() + c + 1);
+      } else lobbyHostArg = r;
     } else if (!std::strcmp(argv[i], "--relay") && i + 1 < argc) {
       std::string r = argv[++i];
       auto c = r.find(':');
@@ -96,17 +109,24 @@ bool Engine::Init(int argc, char** argv) {
       } else relayHost = r;
     } else if (!std::strcmp(argv[i], "--room") && i + 1 < argc) {
       room = argv[++i];
+      roomArg = true;
     }
   }
-  if (!relayHost.empty()) {
-    relayHost_ = relayHost;
-    relayPort_ = relayPort;
-  }
-  roomName_ = room;
   std::string root = repoRoot();
 #ifdef _WIN32
   SetCurrentDirectoryA(root.c_str());
 #endif
+  NetCfg net = LoadNetIni();
+  relayHost_ = net.relay;
+  relayPort_ = net.port;
+  roomName_ = net.room;
+  lobbyHost_ = net.lobby.empty() ? net.relay : net.lobby;
+  lobbyPort_ = net.lobbyPort;
+  if (!relayHost.empty()) relayHost_ = relayHost;
+  if (relayPort > 0) relayPort_ = relayPort;
+  if (roomArg) roomName_ = room;
+  if (!lobbyHostArg.empty()) lobbyHost_ = lobbyHostArg;
+  if (lobbyPortArg > 0) lobbyPort_ = lobbyPortArg;
   std::srand((unsigned)std::time(nullptr));
   inputLog_ = std::fopen("input.log", "w");
   if (inputLog_) {
@@ -216,19 +236,53 @@ bool Engine::Init(int argc, char** argv) {
     if (!ggpo_.Init(this, 7600, 7550, ip, true, 2)) return false;
     screen_ = kNetWait;
     gameMode_ = "versus";
+  } else {
+    beginLobby();
   }
   return true;
 }
 
 bool Engine::beginRoom(bool host) {
-  std::string ip = host ? relayHost_ : (connectIp_.empty() ? relayHost_ : connectIp_);
-  if (!room_.Start(host, ip, relayPort_, roomName_)) return false;
+  std::string ip = relayHost_;
+  if (!host && !connectIp_.empty()) ip = connectIp_;
+  int port = relayPort_;
+  if (!room_.Start(host, ip, port, roomName_)) return false;
   screen_ = kNetWait;
   gameMode_ = "versus";
   training_ = false;
   std::fprintf(stderr, "room %s %s:%d %.8s (need ikemen_relay)\n", host ? "host" : "guest", ip.c_str(),
                relayPort_, roomName_.c_str());
   return true;
+}
+
+bool Engine::beginLobby() {
+  loginUser_.clear();
+  loginPass_.clear();
+  loginField_ = 0;
+  roomCursor_ = 0;
+  if (!lobby_.Connect(lobbyHost_, lobbyPort_)) return false;
+  SDL_StartTextInput();
+  screen_ = kLogin;
+  std::fprintf(stderr, "lobby proto3 %s:%d\n", lobbyHost_.c_str(), lobbyPort_);
+  return true;
+}
+
+void Engine::leaveLobbyUi() {
+  SDL_StopTextInput();
+  lobby_.Close();
+  screen_ = kTitle;
+}
+
+void Engine::backToLobby() {
+  delayNet_.Close();
+  room_.Close();
+  ggpo_.Close();
+  if (lobby_.LoggedIn()) {
+    lobby_.SendLeave();
+    screen_ = kRooms;
+  } else {
+    screen_ = kTitle;
+  }
 }
 
 void Engine::DetectHits() {
@@ -349,7 +403,7 @@ void Engine::StepRoundState() {
     if (world_.matchOver) {
       delayNet_.Close();
       room_.Close();
-      screen_ = kTitle;
+      backToLobby();
     } else {
       NextRound();
     }
@@ -368,17 +422,13 @@ void Engine::Tick() {
   if (input_.Quit()) running_ = false;
   if (screen_ == kNetWait) {
     if (input_.EscPressed()) {
-      delayNet_.Close();
-      room_.Close();
-      ggpo_.Close();
-      screen_ = kTitle;
+      backToLobby();
       return;
     }
     if (room_.Active()) {
       room_.Pump();
       if (room_.Dropped()) {
-        room_.Close();
-        screen_ = kTitle;
+        backToLobby();
         return;
       }
       if (room_.Joined()) {
@@ -435,7 +485,89 @@ void Engine::Tick() {
     }
     return;
   }
+  if (screen_ == kLogin) {
+    lobby_.Pump();
+    if (lobby_.LoggedIn()) {
+      SDL_StopTextInput();
+      screen_ = kRooms;
+      return;
+    }
+    if (input_.EscPressed()) {
+      running_ = false;
+      return;
+    }
+    if (input_.Tab()) loginField_ = 1 - loginField_;
+    auto tryAuth = [&](bool reg) {
+      if (loginUser_.empty()) {
+        loginField_ = 0;
+        return;
+      }
+      if (reg) lobby_.SendRegister(loginUser_, loginPass_);
+      else lobby_.SendLogin(loginUser_, loginPass_);
+    };
+    if (input_.Clicked()) {
+      int mx = input_.ClickX();
+      int my = input_.ClickY();
+      if (my >= 180 && my < 250) loginField_ = 0;
+      else if (my >= 250 && my < 330) loginField_ = 1;
+      else if (my >= 350 && my < 430 && mx >= 360 && mx < 600) tryAuth(false);
+      else if (my >= 350 && my < 430 && mx >= 680 && mx < 960) tryAuth(true);
+    }
+    std::string* t = loginField_ == 0 ? &loginUser_ : &loginPass_;
+    for (unsigned char ch : input_.Text()) {
+      if ((std::isalnum(ch) || ch == '_') && t->size() < 16) t->push_back((char)ch);
+    }
+    if (input_.Backspace() && !t->empty()) t->pop_back();
+    if (input_.Pressed() & kInputS) tryAuth(false);
+    return;
+  }
+  if (screen_ == kRooms) {
+    lobby_.Pump();
+    if (lobby_.MatchReady()) {
+      std::string id = lobby_.RoomId();
+      while (id.size() < 8) id.push_back('x');
+      if (id.size() > 8) id.resize(8);
+      roomName_ = id;
+      lobby_.ClearMatch();
+      if (!beginRoom(lobby_.IsHost())) screen_ = kRooms;
+      return;
+    }
+    if (input_.EscPressed()) {
+      SDL_StopTextInput();
+      screen_ = kTitle;
+      return;
+    }
+    int n = (int)lobby_.Rooms().size();
+    if (n > 0) {
+      if (input_.Pressed() & kInputU) roomCursor_ = (roomCursor_ + n - 1) % n;
+      if (input_.Pressed() & kInputD) roomCursor_ = (roomCursor_ + 1) % n;
+      if (roomCursor_ >= n) roomCursor_ = 0;
+    }
+    bool create = (input_.Pressed() & kInputC) != 0;
+    for (auto& ev : input_.KeyEvents())
+      if (ev == "DOWN C") create = true;
+    if (create) lobby_.SendCreate();
+    auto tryJoin = [&](int idx) {
+      if (idx < 0 || idx >= n) return;
+      const auto& rm = lobby_.Rooms()[idx];
+      if (rm.status != 0 || rm.n >= (rm.maxn ? rm.maxn : 2)) return;
+      lobby_.SendJoin(rm.id);
+    };
+    if ((input_.Pressed() & kInputS) || (input_.Pressed() & kInputA)) tryJoin(roomCursor_);
+    if (input_.Clicked()) {
+      int my = input_.ClickY();
+      for (int i = 0; i < 7 && i < n; i++) {
+        float y = 160.f + i * 54.f;
+        if (my >= y - 8 && my <= y + 40) {
+          roomCursor_ = i;
+          tryJoin(roomCursor_);
+        }
+      }
+    }
+    return;
+  }
   if (screen_ == kTitle) {
+    if (lobby_.Active()) lobby_.Pump();
     auto act = title_.Tick(input_.Pressed(), input_.EscPressed(), 1.f,
                            input_.ClickX(), input_.ClickY(), input_.Clicked());
     if (act == TitleScreen::StartFight) {
@@ -448,6 +580,17 @@ void Engine::Tick() {
         gameMode_ = "watch";
         p1AiLevel_ = 4.f;
         p2AiLevel_ = 4.f;
+      } else if (m == TitleMenu::Online) {
+        if (lobby_.LoggedIn()) {
+          screen_ = kRooms;
+          return;
+        }
+        if (!beginLobby()) {
+#ifdef _WIN32
+          MessageBoxA(nullptr, "Cannot connect lobby (TCP proto3).", "Ikemen net", MB_OK);
+#endif
+        }
+        return;
       } else         if (m == TitleMenu::HostNet || m == TitleMenu::JoinNet) {
         gameMode_ = "versus";
         if (!beginRoom(m == TitleMenu::HostNet)) {
@@ -472,9 +615,7 @@ void Engine::Tick() {
     return;
   }
   if (input_.EscPressed()) {
-    delayNet_.Close();
-    room_.Close();
-    screen_ = kTitle;
+    backToLobby();
     return;
   }
   uint32_t i1 = input_.P1();
@@ -643,6 +784,16 @@ void Engine::DrawFight() {
       render_.DrawDigits(x - 8.f, y, p.amount, 2.2f, 1, 0.2f, 0.15f, a);
   }
   hud_.Draw(render_, p1_, p2_, world_);
+  render_.DrawWord(4.f, 226.f, "FPS", 0.7f, 0.85f, 0.95f, 1, 1);
+  render_.DrawDigits(28.f, 225.f, fpsShow_, 1.1f, 0.85f, 0.95f, 1, 1);
+  if (room_.Active() && room_.Joined()) {
+    int ping = room_.RttMs();
+    render_.DrawWord(70.f, 226.f, "PING", 0.7f, 0.4f, 1, 0.5f, 1);
+    render_.DrawDigits(108.f, 225.f, ping < 0 ? 0 : ping, 1.1f, 0.4f, 1, 0.5f, 1);
+    render_.DrawWord(150.f, 226.f, "MS", 0.7f, 0.4f, 1, 0.5f, 1);
+    render_.DrawWord(180.f, 226.f, "F", 0.7f, 1, 0.9f, 0.4f, 1);
+    render_.DrawDigits(192.f, 225.f, frame_, 1.1f, 1, 0.9f, 0.4f, 1);
+  }
   render_.End();
 }
 
@@ -651,16 +802,47 @@ void Engine::Run() {
     Tick();
     if (screen_ == kTitle) {
       render_.Begin(1280.f, 720.f);
-      title_.Draw(render_);
+      title_.Draw(render_, lobby_.LoggedIn() ? lobby_.User().c_str() : nullptr);
+      render_.End();
+    } else if (screen_ == kLogin) {
+      render_.Begin(1280.f, 720.f);
+      title_.DrawLogin(render_, loginUser_, loginPass_, loginField_, lobby_.Status().c_str());
+      render_.End();
+    } else if (screen_ == kRooms) {
+      render_.Begin(1280.f, 720.f);
+      std::vector<std::string> rows;
+      for (auto& rm : lobby_.Rooms()) {
+        char line[80];
+        std::snprintf(line, sizeof(line), "%s  %s  %d/%d  %s", rm.id.c_str(),
+                      rm.host.empty() ? rm.name.c_str() : rm.host.c_str(), rm.n, rm.maxn ? rm.maxn : 2,
+                      rm.status ? "FIGHT" : "WAIT");
+        rows.push_back(line);
+      }
+      title_.DrawRooms(render_, lobby_.User(), rows, roomCursor_, lobby_.Status().c_str());
       render_.End();
     } else if (screen_ == kNetWait) {
       render_.Begin(1280.f, 720.f);
-      title_.DrawWait(render_, room_.Active() ? room_.WaitLabel() : (ggpo_.Active() ? ggpo_.WaitLabel() : delayNet_.WaitLabel()));
+      char sub[96];
+      std::snprintf(sub, sizeof(sub), "relay %s:%d  room %s", relayHost_.c_str(), relayPort_,
+                    roomName_.c_str());
+      title_.DrawWait(render_,
+                      room_.Active() ? room_.WaitLabel()
+                                     : (ggpo_.Active() ? ggpo_.WaitLabel() : delayNet_.WaitLabel()),
+                      sub);
       render_.End();
     } else {
       DrawFight();
     }
     SDL_GL_SwapWindow(gWin);
+    fpsCount_++;
+    uint32_t now = SDL_GetTicks();
+    if (fpsMs_ == 0) fpsMs_ = now;
+    uint32_t dt = now - fpsMs_;
+    if (dt >= 500) {
+      fpsShow_ = fpsCount_ * 1000 / (int)(dt ? dt : 1);
+      fpsCount_ = 0;
+      fpsMs_ = now;
+    }
     SDL_Delay(8);
   }
 }
@@ -669,6 +851,7 @@ void Engine::Shutdown() {
   delayNet_.Close();
   room_.Close();
   ggpo_.Close();
+  lobby_.Close();
   lua_.Shutdown();
   render_.Shutdown();
   if (gCtx) SDL_GL_DeleteContext(gCtx);

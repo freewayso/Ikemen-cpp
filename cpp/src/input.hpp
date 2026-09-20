@@ -22,6 +22,9 @@ class InputSys {
   int ClickX() const { return clickX_; }
   int ClickY() const { return clickY_; }
   const std::vector<std::string>& KeyEvents() const { return keyEvents_; }
+  const std::string& Text() const { return text_; }
+  bool Backspace() const { return backspace_; }
+  bool Tab() const { return tab_; }
  private:
   uint32_t p1_ = 0, p2_ = 0, pressed_ = 0;
   bool quit_ = false;
@@ -30,4 +33,7 @@ class InputSys {
   bool clicked_ = false;
   int clickX_ = 0, clickY_ = 0;
   std::vector<std::string> keyEvents_;
+  std::string text_;
+  bool backspace_ = false;
+  bool tab_ = false;
 };
