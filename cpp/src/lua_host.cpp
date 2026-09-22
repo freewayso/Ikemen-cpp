@@ -1,4 +1,5 @@
 #include "lua_host.hpp"
+#include "cns.hpp"
 #include "lua.hpp"
 #include <cstring>
 
@@ -18,6 +19,25 @@ static int f_lifeMax(lua_State* L) { lua_pushinteger(L, checkF(L)->snap.lifeMax)
 static int f_lifeSet(lua_State* L) { checkF(L)->snap.life = (int)luaL_checkinteger(L, 2); return 0; }
 static int f_powerSet(lua_State* L) { checkF(L)->snap.power = (int)luaL_checkinteger(L, 2); return 0; }
 static int f_power(lua_State* L) { lua_pushinteger(L, checkF(L)->snap.power); return 1; }
+static int f_rage(lua_State* L) {
+  auto* f = checkF(L);
+  if (lua_gettop(L) >= 2) f->snap.rage = (int)luaL_checkinteger(L, 2);
+  lua_pushinteger(L, f->snap.rage);
+  return 1;
+}
+static int f_rageMax(lua_State* L) { lua_pushinteger(L, checkF(L)->snap.rageMax); return 1; }
+static int f_fireCannon(lua_State* L) {
+  auto* f = checkF(L);
+  if (f->snap.rage < f->snap.rageMax || !f->snap.alive) {
+    lua_pushboolean(L, 0);
+    return 1;
+  }
+  f->snap.rage = 0;
+  f->ChangeState(+State::FireCannon, 0);
+  if (f->cns) f->cns->SpawnFireCannon(*f);
+  lua_pushboolean(L, 1);
+  return 1;
+}
 static int f_ctrl(lua_State* L) {
   auto* f = checkF(L);
   if (lua_gettop(L) >= 2) f->snap.ctrl = lua_toboolean(L, 2) ? 1 : 0;
@@ -134,7 +154,9 @@ static int f_moveTypeH(lua_State* L) {
 
 static const luaL_Reg kFighterMeta[] = {
   {"life", f_life}, {"lifeMax", f_lifeMax}, {"lifeSet", f_lifeSet},
-  {"powerSet", f_powerSet}, {"power", f_power}, {"ctrl", f_ctrl},
+  {"powerSet", f_powerSet}, {"power", f_power},
+  {"rage", f_rage}, {"rageMax", f_rageMax}, {"fireCannon", f_fireCannon},
+  {"ctrl", f_ctrl},
   {"state", f_state}, {"time", f_time}, {"anim", f_anim}, {"animEnded", f_animEnded},
   {"alive", f_alive}, {"hitpause", f_hitpause}, {"hitstun", f_hitstun},
   {"hitShakeOver", f_hitShakeOver}, {"hitOver", f_hitOver}, {"moveType", f_moveType},

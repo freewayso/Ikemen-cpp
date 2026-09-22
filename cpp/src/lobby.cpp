@@ -16,6 +16,7 @@ using socklen_t = int;
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #define SOCKET int
 #define INVALID_SOCKET -1
@@ -53,14 +54,55 @@ bool LobbyClient::Connect(const std::string& ip, int port) {
     return false;
   }
   connect(s, (sockaddr*)&a, sizeof(a));
+  int yes = 1;
+  setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (char*)&yes, sizeof(yes));
   sock_ = (uintptr_t)s;
-  status_ = "LOBBY " + (ip.empty() ? std::string("127.0.0.1") : ip);
+  ready_ = false;
+  status_ = "CONNECTING";
   return true;
+}
+
+void LobbyClient::pollConnect() {
+  if (!sock_ || ready_) return;
+  SOCKET s = (SOCKET)sock_;
+  fd_set w, e;
+  FD_ZERO(&w);
+  FD_ZERO(&e);
+  FD_SET(s, &w);
+  FD_SET(s, &e);
+  timeval tv{0, 0};
+#ifdef _WIN32
+  int n = select(0, nullptr, &w, &e, &tv);
+#else
+  int n = select((int)s + 1, nullptr, &w, &e, &tv);
+#endif
+  if (n <= 0) return;
+  int err = 0;
+  socklen_t el = sizeof(err);
+  getsockopt(s, SOL_SOCKET, SO_ERROR, (char*)&err, &el);
+  if (err != 0) {
+    status_ = "CONN FAIL";
+    Close();
+    return;
+  }
+  ready_ = true;
+  status_ = "HELLO WAIT";
+  flushOut();
+}
+
+void LobbyClient::flushOut() {
+  if (!sock_ || !ready_) return;
+  for (auto& f : outq_) send((SOCKET)sock_, f.data(), (int)f.size(), 0);
+  outq_.clear();
 }
 
 void LobbyClient::sendMsg(int type, const std::string& body) {
   if (!sock_) return;
   std::string f = lb::frame(lb::encodeEnvelope(type, body));
+  if (!ready_) {
+    outq_.push_back(f);
+    return;
+  }
   send((SOCKET)sock_, f.data(), (int)f.size(), 0);
 }
 
@@ -112,7 +154,14 @@ void LobbyClient::onMsg(int type, const std::string& body) {
   } else if (type == lb::S2C_Error) {
     std::string code, msg;
     lb::decodeError(d, n, code, msg);
-    status_ = code + (msg.empty() ? "" : " " + msg);
+    if (code == "EXISTS" && autoLogin_ && !pendingUser_.empty()) {
+      autoLogin_ = false;
+      sendMsg(lb::C2S_Login, lb::encodeAuth(pendingUser_, pendingPass_));
+      status_ = "EXISTS LOGIN";
+    } else {
+      autoLogin_ = false;
+      status_ = code + (msg.empty() ? "" : " " + msg);
+    }
   } else if (type == lb::S2C_RoomList) {
     std::vector<lb::RoomInfo> rs;
     lb::decodeRoomList(d, n, rs);
@@ -146,6 +195,8 @@ void LobbyClient::onMsg(int type, const std::string& body) {
 
 void LobbyClient::Pump() {
   if (!sock_) return;
+  pollConnect();
+  if (!sock_) return;
   char buf[2048];
   for (;;) {
     int n = recv((SOCKET)sock_, buf, (int)sizeof(buf), 0);
@@ -178,12 +229,14 @@ void LobbyClient::Pump() {
 void LobbyClient::Close() {
   if (sock_) closesocket((SOCKET)sock_);
   sock_ = 0;
+  ready_ = false;
   logged_ = false;
   match_ = false;
   autoLogin_ = false;
   pendingUser_.clear();
   pendingPass_.clear();
   rx_.clear();
+  outq_.clear();
   rooms_.clear();
   roomId_.clear();
   status_ = "OFF";

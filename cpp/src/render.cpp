@@ -36,6 +36,9 @@ GLFN(void, glGenVertexArrays, int, unsigned*)
 GLFN(void, glBindVertexArray, unsigned)
 GLFN(void, glGetShaderiv, unsigned, unsigned, int*)
 GLFN(void, glGetShaderInfoLog, unsigned, int, int*, char*)
+GLFN(void, glGetProgramiv, unsigned, unsigned, int*)
+GLFN(void, glGetProgramInfoLog, unsigned, int, int*, char*)
+GLFN(void, glScissor, int, int, int, int)
 GLFN(void, glDeleteShader, unsigned)
 GLFN(void, glEnable, unsigned)
 GLFN(void, glBlendFunc, unsigned, unsigned)
@@ -55,12 +58,13 @@ static void bindGL() {
   BIND(glGetUniformLocation) BIND(glUniformMatrix4fv) BIND(glUniform4f) BIND(glUniform1i)
   BIND(glGenVertexArrays) BIND(glBindVertexArray)
   BIND(glGetShaderiv) BIND(glGetShaderInfoLog) BIND(glDeleteShader)
+  BIND(glGetProgramiv) BIND(glGetProgramInfoLog) BIND(glScissor)
   BIND(glEnable) BIND(glBlendFunc) BIND(glPixelStorei)
   BIND(glClear) BIND(glClearColor) BIND(glViewport)
 #undef BIND
 }
 
-static const char* kVert = R"(#version 330 core
+static const char* kVertCore = R"(#version 330 core
 layout(location=0) in vec2 aPos;
 layout(location=1) in vec2 aUv;
 uniform mat4 uProj;
@@ -68,7 +72,21 @@ uniform mat4 uModel;
 out vec2 vUv;
 void main(){ vUv=aUv; gl_Position=uProj*uModel*vec4(aPos,0,1); }
 )";
-static const char* kFrag = R"(#version 330 core
+static const char* kFragCore = R"(#version 330 core
+in vec2 vUv; out vec4 Frag;
+uniform sampler2D uTex; uniform vec4 uTint; uniform int uUseTex;
+void main(){ vec4 c = uUseTex!=0 ? texture(uTex,vUv)*uTint : uTint; if(c.a<0.01) discard; Frag=c; }
+)";
+static const char* kVertEs = R"(#version 300 es
+layout(location=0) in vec2 aPos;
+layout(location=1) in vec2 aUv;
+uniform mat4 uProj;
+uniform mat4 uModel;
+out vec2 vUv;
+void main(){ vUv=aUv; gl_Position=uProj*uModel*vec4(aPos,0,1); }
+)";
+static const char* kFragEs = R"(#version 300 es
+precision mediump float;
 in vec2 vUv; out vec4 Frag;
 uniform sampler2D uTex; uniform vec4 uTint; uniform int uUseTex;
 void main(){ vec4 c = uUseTex!=0 ? texture(uTex,vUv)*uTint : uTint; if(c.a<0.01) discard; Frag=c; }
@@ -84,6 +102,8 @@ static unsigned compile(unsigned type, const char* src) {
     char log[512];
     pglGetShaderInfoLog(s, 512, nullptr, log);
     std::fprintf(stderr, "shader: %s\n", log);
+    pglDeleteShader(s);
+    return 0;
   }
   return s;
 }
@@ -92,16 +112,49 @@ bool Renderer::Init(int winW, int winH) {
   winW_ = winW; winH_ = winH;
   bindGL();
   if (!pglCreateShader || !pglGenVertexArrays || !pglUseProgram) {
-    std::fprintf(stderr, "OpenGL 3.3 functions missing\n");
+    std::fprintf(stderr, "GL functions missing (need GL 3.3 or GLES 3)\n");
     return false;
   }
-  unsigned vs = compile(0x8B31, kVert);
-  unsigned fs = compile(0x8B30, kFrag);
+#ifdef __ANDROID__
+  unsigned vs = compile(0x8B31, kVertEs);
+  unsigned fs = compile(0x8B30, kFragEs);
+  if (!vs || !fs) {
+    if (vs) pglDeleteShader(vs);
+    if (fs) pglDeleteShader(fs);
+    vs = compile(0x8B31, kVertCore);
+    fs = compile(0x8B30, kFragCore);
+  }
+#else
+  unsigned vs = compile(0x8B31, kVertCore);
+  unsigned fs = compile(0x8B30, kFragCore);
+  if (!vs || !fs) {
+    if (vs) pglDeleteShader(vs);
+    if (fs) pglDeleteShader(fs);
+    vs = compile(0x8B31, kVertEs);
+    fs = compile(0x8B30, kFragEs);
+  }
+#endif
+  if (!vs || !fs) {
+    if (vs) pglDeleteShader(vs);
+    if (fs) pglDeleteShader(fs);
+    std::fprintf(stderr, "shaders failed (need GL 3.3 or GLES 3)\n");
+    return false;
+  }
   prog_ = pglCreateProgram();
   pglAttachShader(prog_, vs);
   pglAttachShader(prog_, fs);
   pglLinkProgram(prog_);
   pglDeleteShader(vs); pglDeleteShader(fs);
+  int linked = 0;
+  if (pglGetProgramiv) {
+    pglGetProgramiv(prog_, 0x8B82, &linked);
+    if (!linked) {
+      char log[512] = {};
+      if (pglGetProgramInfoLog) pglGetProgramInfoLog(prog_, 512, nullptr, log);
+      std::fprintf(stderr, "program link: %s\n", log);
+      return false;
+    }
+  }
   uProj_ = pglGetUniformLocation(prog_, "uProj");
   uModel_ = pglGetUniformLocation(prog_, "uModel");
   uTint_ = pglGetUniformLocation(prog_, "uTint");
@@ -121,11 +174,38 @@ bool Renderer::Init(int winW, int winH) {
   pglTexParameteri(0x0DE1, 0x2801, 0x2600);
   pglTexParameteri(0x0DE1, 0x2800, 0x2600);
   unsigned white = 0xFFFFFFFFu;
-  pglTexImage2D(0x0DE1, 0, 0x8058, 1, 1, 0, 0x1908, 0x1401, &white);
+  int ifmt0 = 0x1908;
+#ifndef __ANDROID__
+  ifmt0 = 0x8058;
+#endif
+  pglTexImage2D(0x0DE1, 0, ifmt0, 1, 1, 0, 0x1908, 0x1401, &white);
   pglEnable(0x0BE2);
   pglBlendFunc(0x0302, 0x0303);
   pglDisable(0x0B44);
+  Resize(winW, winH);
   return true;
+}
+
+void Renderer::Resize(int winW, int winH) {
+  if (winW < 1) winW = 1280;
+  if (winH < 1) winH = 720;
+  winW_ = winW;
+  winH_ = winH;
+  const float target = 1280.f / 720.f;
+  const float scr = (float)winW / (float)winH;
+  if (scr > target) {
+    vpH_ = winH;
+    vpW_ = (int)((float)winH * target + 0.5f);
+    vpX_ = (winW - vpW_) / 2;
+    vpY_ = 0;
+  } else {
+    vpW_ = winW;
+    vpH_ = (int)((float)winW / target + 0.5f);
+    vpX_ = 0;
+    vpY_ = (winH - vpH_) / 2;
+  }
+  if (vpW_ < 1) vpW_ = winW;
+  if (vpH_ < 1) vpH_ = winH;
 }
 
 void Renderer::Begin() {
@@ -134,8 +214,31 @@ void Renderer::Begin() {
 
 void Renderer::Begin(float vw, float vh) {
   pglViewport(0, 0, winW_, winH_);
+  if (pglScissor) {
+    pglDisable(0x0C11);
+  }
+  pglClearColor(0, 0, 0, 1);
+  pglClear(0x00004000);
+  pglViewport(vpX_, vpY_, vpW_, vpH_);
+  if (pglScissor) {
+    pglEnable(0x0C11);
+    pglScissor(vpX_, vpY_, vpW_, vpH_);
+  }
   pglClearColor(0.08f, 0.09f, 0.12f, 1);
   pglClear(0x00004000);
+  pglUseProgram(prog_);
+  float sx = 2.f / vw, sy = -2.f / vh;
+  float proj[16] = {sx,0,0,0, 0,sy,0,0, 0,0,1,0, -1,1,0,1};
+  pglUniformMatrix4fv(uProj_, 1, 0, proj);
+  pglBindVertexArray(vao_);
+}
+
+void Renderer::BeginHud(float vw, float vh) {
+  pglViewport(vpX_, vpY_, vpW_, vpH_);
+  if (pglScissor) {
+    pglEnable(0x0C11);
+    pglScissor(vpX_, vpY_, vpW_, vpH_);
+  }
   pglUseProgram(prog_);
   float sx = 2.f / vw, sy = -2.f / vh;
   float proj[16] = {sx,0,0,0, 0,sy,0,0, 0,0,1,0, -1,1,0,1};
@@ -158,7 +261,11 @@ unsigned Renderer::bindSpriteTex(const SpriteImage& spr) {
   pglTexParameteri(0x0DE1, 0x2800, 0x2600);
   pglTexParameteri(0x0DE1, 0x2802, 0x812F);
   pglTexParameteri(0x0DE1, 0x2803, 0x812F);
-  pglTexImage2D(0x0DE1, 0, 0x8058, spr.w, spr.h, 0, 0x1908, 0x1401, spr.rgba.data());
+  int ifmt = 0x1908;
+#ifndef __ANDROID__
+  ifmt = 0x8058;
+#endif
+  pglTexImage2D(0x0DE1, 0, ifmt, spr.w, spr.h, 0, 0x1908, 0x1401, spr.rgba.data());
   texCache_[&spr] = id;
   return id;
 }
@@ -267,6 +374,8 @@ void Renderer::DrawWord(float x, float y, const char* word, float scale, float r
       case 'E': return "111100111100111";
       case 'T': return "111010010010010";
       case 'Y': return "101101010010010";
+      case 'J': return "001001001101010";
+      case 'C': return "011100100100011";
       case '1': return "001001001001001";
       case '2': return "111001111100111";
       default: return nullptr;
@@ -293,5 +402,7 @@ void Renderer::DrawRect(float x, float y, float w, float h, float r, float g, fl
   drawQuad(x, y, x + w, y + h, 0, 0, 1, 1);
 }
 
-void Renderer::End() {}
+void Renderer::End() {
+  if (pglDisable) pglDisable(0x0C11);
+}
 void Renderer::Shutdown() {}

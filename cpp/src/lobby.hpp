@@ -36,15 +36,19 @@ class LobbyClient {
  private:
   void sendMsg(int type, const std::string& body);
   void onMsg(int type, const std::string& body);
+  void flushOut();
+  void pollConnect();
   uintptr_t sock_ = 0;
   std::string rx_;
   std::string user_;
   std::string roomId_;
   std::string status_ = "CONNECTING";
   std::vector<LobbyRoomInfo> rooms_;
+  std::vector<std::string> outq_;
   bool logged_ = false;
   bool match_ = false;
   bool hostRole_ = false;
+  bool ready_ = false;
   std::string pendingUser_;
   std::string pendingPass_;
   bool autoLogin_ = false;

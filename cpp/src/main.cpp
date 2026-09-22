@@ -9,8 +9,13 @@
 #include <windows.h>
 #endif
 
+#ifndef __ANDROID__
 #define SDL_MAIN_HANDLED
-
+#endif
+#ifdef __ANDROID__
+#include <SDL.h>
+extern "C"
+#endif
 int main(int argc, char** argv) {
   try {
     auto e = std::make_unique<Engine>();

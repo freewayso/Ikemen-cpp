@@ -1,0 +1,9 @@
+; Copy to data/net.ini and set LAN IPs.
+; KCP fight relay (UDP) + proto3 lobby (TCP).
+
+[Net]
+Relay=192.168.1.107
+Port=9000
+Room=kfm1
+Lobby=192.168.1.107
+LobbyPort=8080

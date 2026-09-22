@@ -49,6 +49,16 @@ void Hud::Draw(Renderer& r, const Fighter& a, const Fighter& b, const FightWorld
   float p2x = 684.f * s, p2y = 40.f * s;
   bar(p1x, p1y, 1.f, a.snap.life / (float)a.snap.lifeMax);
   bar(p2x, p2y, -1.f, b.snap.life / (float)b.snap.lifeMax);
+  auto rageBar = [&](float x, float y, const Fighter& f) {
+    float full = f.snap.rageMax > 0 ? (float)f.snap.rage / (float)f.snap.rageMax : 0;
+    r.DrawRect(x, y, 36.f, 5.f, 0.12f, 0.08f, 0.04f, 0.9f);
+    if (full > 0)
+      r.DrawRect(x + 1.f, y + 1.f, 34.f * full, 3.f, 1.f, 0.45f + 0.4f * full, 0.08f, 1);
+    if (f.snap.rage >= f.snap.rageMax && f.snap.rageMax > 0)
+      r.DrawWord(x + 38.f, y - 1.f, "C", 1.1f, 1.f, 0.85f, 0.15f, 1);
+  };
+  rageBar(8.f, 28.f, a);
+  rageBar(kGameW - 52.f, 28.f, b);
   r.DrawDigits(8.f, 4.f, a.snap.life, 1.6f, 1, 0.85f, 0.2f, 1);
   r.DrawDigits(kGameW - 52.f, 4.f, b.snap.life, 1.6f, 1, 0.85f, 0.2f, 1);
   if (w.comboHits[0] > 0) {

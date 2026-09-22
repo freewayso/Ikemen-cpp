@@ -20,7 +20,7 @@ endif
 LUA_SRC := $(filter-out third_party/lua-5.4.7/src/lua.c third_party/lua-5.4.7/src/luac.c,$(wildcard third_party/lua-5.4.7/src/*.c))
 LUA_OBJ := $(LUA_SRC:.c=.o)
 KCP_OBJ := third_party/kcp/ikcp.o
-CPP_SRC := src/main.cpp src/engine.cpp src/gl_loader.cpp src/render.cpp src/sff.cpp src/air.cpp src/fighter.cpp src/lua_host.cpp src/cmd.cpp src/input.cpp src/net.cpp src/room_sync.cpp src/camera.cpp src/rollback.cpp src/stage.cpp src/title.cpp src/cns.cpp src/lobby.cpp
+CPP_SRC := src/main.cpp src/engine.cpp src/gl_loader.cpp src/render.cpp src/sff.cpp src/air.cpp src/fighter.cpp src/lua_host.cpp src/cmd.cpp src/input.cpp src/net.cpp src/room_sync.cpp src/camera.cpp src/rollback.cpp src/stage.cpp src/title.cpp src/cns.cpp src/lobby.cpp src/android_fs.cpp
 CPP_OBJ := $(CPP_SRC:.cpp=.o)
 HDRS := $(wildcard src/*.hpp)
 

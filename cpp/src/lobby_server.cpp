@@ -27,7 +27,6 @@ using socklen_t = int;
 #include <cstring>
 #include <fstream>
 #include <map>
-#include <random>
 #include <string>
 #include <vector>
 
@@ -72,9 +71,13 @@ static std::string hashPass(const std::string& salt, const std::string& pass) { 
 
 static std::string newSalt() {
   std::string s(16, '\0');
-  std::random_device rd;
+  static uint32_t ctr = 1;
   uint32_t t = (uint32_t)std::chrono::steady_clock::now().time_since_epoch().count();
-  for (int i = 0; i < 16; i++) s[i] = (char)((rd() ^ (t * 1103515245u + i)) & 0xff);
+  ctr += t * 1664525u + 1013904223u;
+  for (int i = 0; i < 16; i++) {
+    ctr = ctr * 1103515245u + 12345u + (uint32_t)i;
+    s[i] = (char)((ctr >> 16) ^ (t >> (i % 24)));
+  }
   return s;
 }
 

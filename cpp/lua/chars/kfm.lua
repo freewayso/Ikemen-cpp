@@ -20,6 +20,8 @@ local State = {
   GuardHitCrouch = 152,
   GuardHitAir = 154,
   StandingPunch = 200,
+  FireCannon = 300,
+  FireCannonHit = 301,
   KfmAirSpecial = 212,
   StandGetHitShake = 5000,
   StandGetHitSlide = 5001,
@@ -36,6 +38,13 @@ local State = {
 
 local function gethit(self)
   local st = self:state()
+  if st == State.FireCannonHit or st == State.AirGetHitShake then
+    if self:hitShakeOver() then
+      self:hitVelSet(true, true)
+      self:changeState(State.AirGetHit, 0)
+    end
+    return
+  end
   if st == State.StandGetHitShake or st == State.CrouchGetHitShake then
     if self:hitShakeOver() then
       if not self:alive() and self:posY() >= 0 then
@@ -72,17 +81,49 @@ local function gethit(self)
   end
 end
 
+local function wantWalk(self)
+  if self:input("F") then return 1 end
+  if self:input("B") then return -1 end
+  return 0
+end
+
+local function goWalk(self, dir, st)
+  if dir > 0 then
+    self:map("walk", 4)
+    self:velX(2.4)
+  else
+    self:map("walk", -4)
+    self:velX(-2.2)
+  end
+  if st ~= State.Walk then self:changeState(State.Walk, 1) end
+end
+
 local function loco(self)
   local st = self:state()
+  local dir = wantWalk(self)
+  if st == State.FireCannon then
+    if self:animEnded() or self:time() > 22 then self:changeState(State.Stand, 1) end
+    return
+  end
   if st == State.StandingPunch then
     if self:time() <= 1 then self:hitDef(40, -5) end
+    if self:time() > 6 and dir ~= 0 then
+      goWalk(self, dir, st)
+      return
+    end
+    if self:command("a") or self:command("b") then
+      self:changeState(State.StandingPunch, 0)
+      self:hitDef(40, -5)
+      self:velX(0)
+      return
+    end
     if self:animEnded() or self:time() > 24 then self:changeState(State.Stand, 1) end
     return
   end
   if st == State.JumpStart then
     if self:animEnded() or self:time() >= 7 then
       local vx = 0
-      if self:input("F") then vx = 2.5 elseif self:input("B") then vx = -2.55 end
+      if dir > 0 then vx = 2.5 elseif dir < 0 then vx = -2.55 end
       self:velX(vx)
       self:velY(-8.4)
       self:changeState(State.Jump, 1)
@@ -90,50 +131,78 @@ local function loco(self)
     return
   end
   if st == State.Jump then
+    if dir > 0 then self:velX(2.5) elseif dir < 0 then self:velX(-2.55) end
     if self:velY() > 0 and self:posY() >= 0 then self:changeState(State.Land, 0) end
     return
   end
   if st == State.Land then
-    if self:animEnded() or self:time() > 12 then self:changeState(State.Stand, 1) end
+    if dir ~= 0 then
+      goWalk(self, dir, st)
+      return
+    end
+    if self:animEnded() or self:time() > 8 then self:changeState(State.Stand, 1) end
     return
   end
   if st == State.StandToCrouch then
+    if dir ~= 0 then
+      goWalk(self, dir, st)
+      return
+    end
     if self:animEnded() or self:time() > 3 then self:changeState(State.Crouch, 1) end
     return
   end
   if st == State.Crouch then
+    if dir ~= 0 then
+      goWalk(self, dir, st)
+      return
+    end
     if not self:input("D") then self:changeState(State.CrouchToStand, 1) end
     return
   end
   if st == State.CrouchToStand then
+    if dir ~= 0 then
+      goWalk(self, dir, st)
+      return
+    end
     if self:animEnded() or self:time() > 4 then self:changeState(State.Stand, 1) end
     return
   end
   if not self:ctrl() then return end
-  if self:command("a") or self:input("a") then
+  if self:command("c") and self:rage() >= self:rageMax() then
+    self:fireCannon()
+    self:map("walk", 0)
+    return
+  end
+  if self:command("a") or self:command("b") then
     self:changeState(State.StandingPunch, 0)
     self:hitDef(40, -5)
     self:velX(0)
+    self:map("walk", 0)
     return
   end
   if self:input("U") then
     self:changeState(State.JumpStart, 0)
+    self:map("walk", 0)
     return
   end
-  if self:input("D") then
+  if self:input("D") and dir == 0 then
     self:changeState(State.StandToCrouch, 0)
     self:velX(0)
+    self:map("walk", 0)
     return
   end
-  if self:input("F") then
-    self:velX(2.4)
-    if st ~= State.Walk then self:changeState(State.Walk, 1) end
-  elseif self:input("B") then
-    self:velX(-2.2)
-    if st ~= State.Walk then self:changeState(State.Walk, 1) end
+  if dir ~= 0 then
+    goWalk(self, dir, st)
   else
-    self:velX(0)
-    if st == State.Walk then self:changeState(State.Stand, 1) end
+    local w = self:map("walk")
+    if w > 0 then self:map("walk", w - 1) elseif w < 0 then self:map("walk", w + 1) end
+    w = self:map("walk")
+    if w == 0 then
+      self:velX(0)
+      if st == State.Walk then self:changeState(State.Stand, 1) end
+    else
+      goWalk(self, w > 0 and 1 or -1, st)
+    end
   end
 end
 

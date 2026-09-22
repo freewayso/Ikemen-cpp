@@ -1,15 +1,24 @@
 #include "engine.hpp"
 #include "stage.hpp"
 #include "ini.hpp"
+#ifndef __ANDROID__
 #define SDL_MAIN_HANDLED
+#endif
 #include <SDL.h>
-#include <SDL_syswm.h>
 #ifdef _WIN32
+#include <SDL_syswm.h>
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
 #include <imm.h>
+#endif
+#ifdef __ANDROID__
+#include "android_fs.hpp"
+#endif
+#include <sys/stat.h>
+#ifndef _WIN32
+#include <unistd.h>
 #endif
 #include <cstdio>
 #include <cstring>
@@ -47,11 +56,20 @@ static bool dirExists(const std::string& p) {
   DWORD a = GetFileAttributesA(p.c_str());
   return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
 #else
-  return true;
+  struct stat st {};
+  return ::stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
 #endif
 }
 
 static std::string repoRoot() {
+#ifdef __ANDROID__
+  std::string root;
+  if (AndroidPrepareDataRoot(root) && dirExists(root + "/chars") && dirExists(root + "/stages"))
+    return root;
+  const char* base = SDL_AndroidGetInternalStoragePath();
+  if (base && base[0]) return std::string(base) + "/ikemen";
+  return ".";
+#endif
 #ifdef _WIN32
   char buf[MAX_PATH] = {};
   if (GetModuleFileNameA(nullptr, buf, MAX_PATH)) {
@@ -110,11 +128,32 @@ bool Engine::Init(int argc, char** argv) {
     } else if (!std::strcmp(argv[i], "--room") && i + 1 < argc) {
       room = argv[++i];
       roomArg = true;
+    } else if (!std::strcmp(argv[i], "--user") && i + 1 < argc) {
+      autoUser_ = argv[++i];
+    } else if (!std::strcmp(argv[i], "--create")) {
+      autoCreate_ = true;
+    } else if (!std::strcmp(argv[i], "--join")) {
+      autoJoin_ = true;
     }
   }
+
+  SDL_SetHint(SDL_HINT_IME_SHOW_UI, "0");
+#ifndef __ANDROID__
+  SDL_SetMainReady();
+#endif
+  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_EVENTS) != 0) {
+    std::fprintf(stderr, "SDL: %s\n", SDL_GetError());
+#ifdef _WIN32
+    MessageBoxA(nullptr, SDL_GetError(), "Ikemen SDL init failed", MB_OK);
+#endif
+    return false;
+  }
+
   std::string root = repoRoot();
 #ifdef _WIN32
   SetCurrentDirectoryA(root.c_str());
+#else
+  chdir(root.c_str());
 #endif
   NetCfg net = LoadNetIni();
   relayHost_ = net.relay;
@@ -134,30 +173,30 @@ bool Engine::Init(int argc, char** argv) {
     std::fflush(inputLog_);
   }
 
-  SDL_SetHint(SDL_HINT_IME_SHOW_UI, "0");
-  SDL_SetMainReady();
-  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_EVENTS) != 0) {
-    std::fprintf(stderr, "SDL: %s\n", SDL_GetError());
-#ifdef _WIN32
-    MessageBoxA(nullptr, SDL_GetError(), "Ikemen SDL init failed", MB_OK);
-#endif
-    return false;
-  }
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+#ifdef __ANDROID__
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+#else
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#endif
   int wx = 40, wy = 40;
   const char* wtitle = "Ikemen GO";
-  if (mode_ == "host" || mode_ == "rollback-host") {
+  if (mode_ == "host" || mode_ == "rollback-host" || autoCreate_) {
     wx = 20;
     wy = 40;
     wtitle = "Ikemen GO [HOST]";
-  } else if (mode_ == "connect" || mode_ == "rollback") {
+  } else if (mode_ == "connect" || mode_ == "rollback" || autoJoin_) {
     wx = 660;
     wy = 80;
     wtitle = "Ikemen GO [CLIENT]";
   }
-  gWin = SDL_CreateWindow(wtitle, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 1280, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
+  Uint32 wflags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN;
+#ifdef __ANDROID__
+  wflags |= SDL_WINDOW_FULLSCREEN | SDL_WINDOW_ALLOW_HIGHDPI;
+#endif
+  gWin = SDL_CreateWindow(wtitle, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 1280, 720, wflags);
   if (!gWin) {
 #ifdef _WIN32
     MessageBoxA(nullptr, SDL_GetError(), "Ikemen window failed", MB_OK);
@@ -172,15 +211,25 @@ bool Engine::Init(int argc, char** argv) {
     return false;
   }
   SDL_GL_SetSwapInterval(0);
-  if (!render_.Init(1280, 720)) {
+  int dw = 1280, dh = 720;
+  SDL_GL_GetDrawableSize(gWin, &dw, &dh);
+  if (!render_.Init(dw, dh)) {
 #ifdef _WIN32
     MessageBoxA(nullptr, "OpenGL 3.3 shaders/buffers failed", "Ikemen render failed", MB_OK);
 #endif
     return false;
   }
   SDL_StopTextInput();
+#ifndef __ANDROID__
   SDL_SetWindowPosition(gWin, wx, wy);
   SDL_RaiseWindow(gWin);
+#endif
+  input_.BindWindow(gWin);
+  input_.SetLetterbox(render_.VpX(), render_.VpTop(), render_.VpW(), render_.VpH(), render_.WinW(),
+                      render_.WinH());
+#ifdef __ANDROID__
+  input_.SetVirtualPad(true);
+#endif
 #ifdef _WIN32
   SDL_SysWMinfo wminfo;
   SDL_VERSION(&wminfo.version);
@@ -250,20 +299,57 @@ bool Engine::beginRoom(bool host) {
   screen_ = kNetWait;
   gameMode_ = "versus";
   training_ = false;
+  SDL_StopTextInput();
+  SDL_RaiseWindow(gWin);
   std::fprintf(stderr, "room %s %s:%d %.8s (need ikemen_relay)\n", host ? "host" : "guest", ip.c_str(),
                relayPort_, roomName_.c_str());
   return true;
 }
 
 bool Engine::beginLobby() {
-  loginUser_.clear();
+  openLogin(false);
+  return true;
+}
+
+void Engine::openLogin(bool connectNow) {
   loginPass_.clear();
+#ifdef __ANDROID__
+  loginField_ = 2;
+#else
   loginField_ = 0;
-  roomCursor_ = 0;
-  if (!lobby_.Connect(lobbyHost_, lobbyPort_)) return false;
+#endif
+  loginNote_.clear();
+  lobbyEdit_ = FormatHostPort(lobbyHost_, lobbyPort_);
+  relayEdit_ = FormatHostPort(relayHost_, relayPort_);
+  if (connectNow) {
+    if (!lobby_.Connect(lobbyHost_, lobbyPort_)) loginNote_ = "CONN FAIL";
+  }
   SDL_StartTextInput();
   screen_ = kLogin;
-  std::fprintf(stderr, "lobby proto3 %s:%d\n", lobbyHost_.c_str(), lobbyPort_);
+}
+
+bool Engine::applyIpSettings(bool saveFile) {
+  ParseHostPort(lobbyEdit_, lobbyHost_, lobbyPort_);
+  ParseHostPort(relayEdit_, relayHost_, relayPort_);
+  if (lobbyHost_.empty()) lobbyHost_ = "127.0.0.1";
+  if (relayHost_.empty()) relayHost_ = lobbyHost_;
+  if (lobbyPort_ <= 0) lobbyPort_ = 8080;
+  if (relayPort_ <= 0) relayPort_ = 9000;
+  lobbyEdit_ = FormatHostPort(lobbyHost_, lobbyPort_);
+  relayEdit_ = FormatHostPort(relayHost_, relayPort_);
+  if (saveFile) {
+    NetCfg c;
+    c.relay = relayHost_;
+    c.port = relayPort_;
+    c.room = roomName_;
+    c.lobby = lobbyHost_;
+    c.lobbyPort = lobbyPort_;
+    if (!SaveNetIni(c)) {
+      loginNote_ = "SAVE FAIL";
+      return false;
+    }
+    loginNote_ = std::string("SAVED ") + lobbyEdit_;
+  }
   return true;
 }
 
@@ -359,6 +445,8 @@ void Engine::ResetMatch() {
   cns_.Enter(p1_, State::Stand, 1);
   cns_.Enter(p2_, State::Stand, 1);
   frame_ = 0;
+  netSendFrame_ = 0;
+  lastNetSendMs_ = 0;
 }
 
 void Engine::NextRound() {
@@ -411,6 +499,7 @@ void Engine::StepRoundState() {
 }
 
 void Engine::Tick() {
+  input_.SetCombatPad(screen_ == kFight);
   input_.Poll();
   if (inputLog_) {
     for (auto& ev : input_.KeyEvents())
@@ -434,6 +523,10 @@ void Engine::Tick() {
       if (room_.Joined()) {
         std::srand(room_.Seed());
         ResetMatch();
+        lastRoomStepMs_ = 0;
+        SDL_StopTextInput();
+        SDL_RaiseWindow(gWin);
+        SDL_SetWindowInputFocus(gWin);
         screen_ = kFight;
       }
       return;
@@ -492,37 +585,105 @@ void Engine::Tick() {
       screen_ = kRooms;
       return;
     }
+    if (!autoUser_.empty() && !autoAuthSent_) {
+      const std::string& st = lobby_.Status();
+      if (!lobby_.Active()) {
+        applyIpSettings(false);
+        lobby_.Connect(lobbyHost_, lobbyPort_);
+      }
+      if (st != "CONNECTING" && st != "LOGIN" && st != "REGISTER" && st != "CONN FAIL") {
+        loginUser_ = autoUser_;
+        autoAuthSent_ = true;
+        lobby_.SendRegister(autoUser_, "");
+      }
+    }
     if (input_.EscPressed()) {
       running_ = false;
       return;
     }
-    if (input_.Tab()) loginField_ = 1 - loginField_;
+    if (input_.Tab()) loginField_ = (loginField_ + 1) % 4;
     auto tryAuth = [&](bool reg) {
       if (loginUser_.empty()) {
         loginField_ = 0;
+        loginNote_ = "NEED USER";
         return;
       }
+      applyIpSettings(true);
+      lobby_.Close();
+      if (!lobby_.Connect(lobbyHost_, lobbyPort_)) {
+        loginNote_ = "CONN FAIL";
+        return;
+      }
+      const std::string& st = lobby_.Status();
+      if (st == "REGISTER" || st == "LOGIN") return;
       if (reg) lobby_.SendRegister(loginUser_, loginPass_);
       else lobby_.SendLogin(loginUser_, loginPass_);
+      loginNote_ = lobby_.Status();
+    };
+    auto appendChar = [&](char ch) {
+      std::string* t = &loginUser_;
+      size_t cap = 16;
+      if (loginField_ == 1) {
+        t = &loginPass_;
+        cap = 16;
+      } else if (loginField_ == 2) {
+        t = &lobbyEdit_;
+        cap = 22;
+      } else if (loginField_ == 3) {
+        t = &relayEdit_;
+        cap = 22;
+      }
+      if (t->size() < cap) t->push_back(ch);
+    };
+    auto delChar = [&]() {
+      std::string* t = loginField_ == 0 ? &loginUser_ : loginField_ == 1 ? &loginPass_ : loginField_ == 2 ? &lobbyEdit_ : &relayEdit_;
+      if (!t->empty()) t->pop_back();
     };
     if (input_.Clicked()) {
-      int mx = input_.ClickX();
-      int my = input_.ClickY();
-      if (my >= 180 && my < 250) loginField_ = 0;
-      else if (my >= 250 && my < 330) loginField_ = 1;
-      else if (my >= 350 && my < 430 && mx >= 360 && mx < 600) tryAuth(false);
-      else if (my >= 350 && my < 430 && mx >= 680 && mx < 960) tryAuth(true);
+      int hit = title_.HitLogin(input_.ClickX(), input_.ClickY(), true);
+      if (hit >= 0 && hit <= 3) loginField_ = hit;
+      else if (hit == 10) tryAuth(false);
+      else if (hit == 11) tryAuth(true);
+      else if (hit == 12) applyIpSettings(true);
+      else if (hit >= 100 && hit < 112) {
+        static const char keys[12] = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '.', ':'};
+        if (loginField_ < 2) loginField_ = 2;
+        appendChar(keys[hit - 100]);
+      } else if (hit == 200) delChar();
     }
-    std::string* t = loginField_ == 0 ? &loginUser_ : &loginPass_;
     for (unsigned char ch : input_.Text()) {
-      if ((std::isalnum(ch) || ch == '_') && t->size() < 16) t->push_back((char)ch);
+      if (loginField_ <= 1) {
+        if ((std::isalnum(ch) || ch == '_') && loginField_ == 0) appendChar((char)ch);
+        else if (loginField_ == 1 && ch >= 32 && ch < 127) appendChar((char)ch);
+      } else if ((std::isdigit(ch) || ch == '.' || ch == ':') || std::isalpha(ch)) {
+        appendChar((char)ch);
+      }
     }
-    if (input_.Backspace() && !t->empty()) t->pop_back();
+    if (input_.Backspace()) delChar();
     if (input_.Pressed() & kInputS) tryAuth(false);
+#ifdef __ANDROID__
+    static const int fy[4] = {108, 162, 216, 270};
+    SDL_Rect tr{280, fy[loginField_ < 0 || loginField_ > 3 ? 0 : loginField_], 960, 46};
+    SDL_SetTextInputRect(&tr);
+#endif
     return;
   }
   if (screen_ == kRooms) {
     lobby_.Pump();
+    if (autoCreate_ && lobby_.LoggedIn() && lobby_.RoomId().empty() &&
+        lobby_.Status() != "CREATE" && lobby_.Status() != "HOST WAIT") {
+      autoCreate_ = false;
+      lobby_.SendCreate();
+    }
+    if (autoJoin_ && lobby_.LoggedIn() && lobby_.RoomId().empty()) {
+      for (auto& rm : lobby_.Rooms()) {
+        if (rm.status == 0 && rm.n < (rm.maxn ? rm.maxn : 2) && !rm.id.empty()) {
+          autoJoin_ = false;
+          lobby_.SendJoin(rm.id);
+          break;
+        }
+      }
+    }
     if (lobby_.MatchReady()) {
       std::string id = lobby_.RoomId();
       while (id.size() < 8) id.push_back('x');
@@ -555,7 +716,13 @@ void Engine::Tick() {
     };
     if ((input_.Pressed() & kInputS) || (input_.Pressed() & kInputA)) tryJoin(roomCursor_);
     if (input_.Clicked()) {
+      int mx = input_.ClickX();
       int my = input_.ClickY();
+      if (mx >= 980 && my >= 10 && my <= 80) {
+        lobby_.Close();
+        openLogin(false);
+        return;
+      }
       for (int i = 0; i < 7 && i < n; i++) {
         float y = 160.f + i * 54.f;
         if (my >= y - 8 && my <= y + 40) {
@@ -638,13 +805,26 @@ void Engine::Tick() {
       screen_ = kTitle;
       return;
     }
-    room_.SendInput(frame_, input_.P1());
+    uint32_t local = input_.P1() | input_.P2();
+    const int kAhead = 2;
+    uint32_t now = SDL_GetTicks();
+    if (netSendFrame_ < frame_) netSendFrame_ = frame_;
+    if (netSendFrame_ < frame_ + kAhead && (lastNetSendMs_ == 0 || now - lastNetSendMs_ >= 16)) {
+      room_.SendInput(netSendFrame_, local);
+      netSendFrame_++;
+      lastNetSendMs_ = now;
+    }
+    int behind = room_.ServerLatest() - room_.WantFrame();
+    int maxSim = 1;
+    if (behind > 8) maxSim = 16;
+    else if (lastRoomStepMs_ != 0 && now - lastRoomStepMs_ < 15) maxSim = 0;
     int n = 0;
     uint32_t p0 = 0, p1 = 0;
-    while (n < 90 && room_.NextConfirm(p0, p1)) {
+    while (n < maxSim && room_.NextConfirm(p0, p1)) {
       StepFightWithInputs(p0, p1, true);
       n++;
     }
+    if (n > 0) lastRoomStepMs_ = now;
     return;
   }
   if (delayNet_.Synced()) {
@@ -770,7 +950,10 @@ void Engine::DrawFight() {
     float scl = cam_.Scale();
     float x = kGameW * 0.5f + (p.pos.x - cam_.X()) * scl;
     float y = stage_.zoffset + p.pos.y * scl;
-    render_.DrawRect(x - 6, y - 6, 12, 12, 1, 0.8f, 0.2f, 1);
+    render_.DrawRect(x - 11.f, y - 8.f, 22.f, 16.f, 1.f, 0.28f, 0.05f, 1);
+    render_.DrawRect(x - 7.f, y - 5.f, 14.f, 10.f, 1.f, 0.75f, 0.15f, 1);
+    float tip = p.facing >= 0 ? x + 6.f : x - 14.f;
+    render_.DrawRect(tip, y - 3.f, 8.f, 6.f, 1.f, 0.95f, 0.45f, 0.95f);
   }
   stage_.Draw(render_, cam_.X(), 0, 1);
   for (auto& p : world_.popups) {
@@ -793,12 +976,42 @@ void Engine::DrawFight() {
     render_.DrawWord(150.f, 226.f, "MS", 0.7f, 0.4f, 1, 0.5f, 1);
     render_.DrawWord(180.f, 226.f, "F", 0.7f, 1, 0.9f, 0.4f, 1);
     render_.DrawDigits(192.f, 225.f, frame_, 1.1f, 1, 0.9f, 0.4f, 1);
+#ifndef __ANDROID__
+    if (!(SDL_GetWindowFlags(gWin) & SDL_WINDOW_INPUT_FOCUS))
+      render_.DrawWord(40.f, 110.f, "CLICK WINDOW TO MOVE", 1.4f, 1, 0.85f, 0.2f, 1);
+#endif
   }
   render_.End();
+  if (input_.VirtualPad() && input_.CombatPad()) {
+    render_.BeginHud(1280.f, 720.f);
+    auto disc = [&](float cx, float cy, float r, float rr, float gg, float bb, float aa) {
+      render_.DrawRect(cx - r, cy - r, r * 2.f, r * 2.f, rr, gg, bb, aa);
+      render_.DrawRect(cx - r * 0.72f, cy - r * 0.72f, r * 1.44f, r * 1.44f, rr * 0.85f, gg * 0.85f, bb * 0.85f, aa);
+    };
+    disc(input_.StickOX(), input_.StickOY(), VPad::DR, 0.22f, 0.28f, 0.38f, 0.38f);
+    disc(input_.StickKX(), input_.StickKY(), VPad::KR, 0.55f, 0.72f, 0.95f, input_.StickHeld() ? 0.85f : 0.5f);
+    disc(VPad::Jx, VPad::Jy, VPad::JR, 0.9f, 0.28f, 0.22f, input_.BtnJ() ? 0.9f : 0.5f);
+    disc(VPad::Kx, VPad::Ky, VPad::BR, 0.22f, 0.48f, 0.95f, input_.BtnK() ? 0.9f : 0.5f);
+    const Fighter& me = (room_.Active() && !room_.IsHost()) ? p2_ : p1_;
+    bool skillOn = me.snap.rage >= me.snap.rageMax && me.snap.rageMax > 0;
+    disc(VPad::Cx, VPad::Cy, VPad::CR, skillOn ? 1.f : 0.45f, skillOn ? 0.55f : 0.35f,
+         skillOn ? 0.08f : 0.18f, input_.BtnC() || skillOn ? 0.95f : 0.4f);
+    render_.DrawWord(VPad::Jx - 16.f, VPad::Jy - 14.f, "J", 8.f, 1, 1, 1, 1);
+    render_.DrawWord(VPad::Kx - 16.f, VPad::Ky - 14.f, "K", 8.f, 1, 1, 1, 1);
+    render_.DrawWord(VPad::Cx - 14.f, VPad::Cy - 12.f, "C", 6.5f, 1, 1, 1, 1);
+    render_.End();
+  }
 }
 
 void Engine::Run() {
   while (running_) {
+    int dw = 0, dh = 0;
+    if (gWin) SDL_GL_GetDrawableSize(gWin, &dw, &dh);
+    if (dw > 0 && dh > 0 && (dw != render_.WinW() || dh != render_.WinH())) {
+      render_.Resize(dw, dh);
+      input_.SetLetterbox(render_.VpX(), render_.VpTop(), render_.VpW(), render_.VpH(), render_.WinW(),
+                          render_.WinH());
+    }
     Tick();
     if (screen_ == kTitle) {
       render_.Begin(1280.f, 720.f);
@@ -806,7 +1019,8 @@ void Engine::Run() {
       render_.End();
     } else if (screen_ == kLogin) {
       render_.Begin(1280.f, 720.f);
-      title_.DrawLogin(render_, loginUser_, loginPass_, loginField_, lobby_.Status().c_str());
+      const char* st = loginNote_.empty() ? lobby_.Status().c_str() : loginNote_.c_str();
+      title_.DrawLogin(render_, loginUser_, loginPass_, lobbyEdit_, relayEdit_, loginField_, st, true);
       render_.End();
     } else if (screen_ == kRooms) {
       render_.Begin(1280.f, 720.f);

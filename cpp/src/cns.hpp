@@ -21,6 +21,7 @@ class CnsBank {
   void ApplyPhysics(Fighter& f, float left, float right);
   void GlobalCollision(Fighter& a, Fighter& b);
   void TickProjectiles(Fighter& p1, Fighter& p2, float left, float right);
+  void SpawnFireCannon(Fighter& f);
   void OnHit(Fighter& atk, Fighter& def, HitResult hitResult);
   void ApplyQueuedDamage(Fighter& f);
   void ActionFinish(Fighter& f);

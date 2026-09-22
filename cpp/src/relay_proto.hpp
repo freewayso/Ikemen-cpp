@@ -112,8 +112,9 @@ inline void fsPrintSpec(const char* who) {
 
 inline bool fsShouldLog(const FsMsg& m) {
   if (m.cmd != kFsInput && m.cmd != kFsConfirm) return true;
-  if (m.frame < 8) return true;
-  return (m.frame % 30) == 0;
+  if (m.a || m.b) return m.frame < 12 || (m.frame % 60) == 0;
+  if (m.frame < 3) return true;
+  return (m.frame % 60) == 0;
 }
 
 inline void fsDump(const char* who, const char* dir, const FsMsg& m, int nbytes = kFsHdr) {

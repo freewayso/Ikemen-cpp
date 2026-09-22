@@ -102,6 +102,14 @@ static const uint8_t* glyph(char c) {
   if (c == '/') return sl;
   if (c == '-') return mn;
   if (c == '_') return mn;
+  if (c == '.') {
+    static const uint8_t dt[7] = {0, 0, 0, 0, 0, 0x20, 0x20};
+    return dt;
+  }
+  if (c == ':') {
+    static const uint8_t cl[7] = {0, 0x20, 0x20, 0, 0x20, 0x20, 0};
+    return cl;
+  }
   return sp;
 }
 
@@ -221,25 +229,72 @@ void TitleScreen::DrawWait(Renderer& r, const char* msg, const char* sub) {
   drawText(r, 640, 430, "ESC TO CANCEL", 0.8f, 0.8f, 0.8f, 0);
 }
 
-void TitleScreen::DrawLogin(Renderer& r, const std::string& user, const std::string& pass, int field, const char* status) {
+void TitleScreen::DrawLogin(Renderer& r, const std::string& user, const std::string& pass, const std::string& lobby,
+                            const std::string& relay, int field, const char* status, bool pad) {
   r.DrawRect(0, 0, 1280, 720, 0.08f, 0.1f, 0.16f, 1);
   r.DrawRect(0, 0, 1280, 90, 0.45f, 0.62f, 0.82f, 1);
-  drawText(r, 80, 30, "LOGIN", 1, 1, 1, 1);
-  drawText(r, 200, 200, "USER", 0.8f, 0.9f, 1, 1);
-  r.DrawRect(420, 188, 760, 48, field == 0 ? 0.2f : 0.05f, 0.25f, 0.35f, 0.9f);
-  drawText(r, 440, 200, user.empty() ? "_" : user.c_str(), 1, 1, 1, 1);
-  drawText(r, 200, 280, "PASS", 0.8f, 0.9f, 1, 1);
-  r.DrawRect(420, 268, 760, 48, field == 1 ? 0.2f : 0.05f, 0.25f, 0.35f, 0.9f);
-  std::string stars(pass.size(), '-');
-  drawText(r, 440, 280, stars.empty() ? "_" : stars.c_str(), 1, 1, 1, 1);
-  r.DrawRect(360, 360, 240, 56, 0.12f, 0.35f, 0.22f, 1);
-  drawText(r, 480, 376, "LOGIN", 1, 1, 1, 0);
-  r.DrawRect(680, 360, 280, 56, 0.35f, 0.22f, 0.12f, 1);
-  drawText(r, 820, 376, "REGISTER", 1, 1, 1, 0);
-  drawText(r, 640, 450, "TAB SWITCH  ENTER LOGIN", 0.75f, 0.8f, 0.85f, 0);
-  drawText(r, 640, 510, status && status[0] ? status : "USER ONLY OK", 1, 0.85f, 0.4f, 0);
+  drawText(r, 80, 30, "LOGIN / IP", 1, 1, 1, 1);
+
+  auto fieldBox = [&](int id, float y, const char* label, const std::string& val) {
+    drawText(r, 40, y + 12, label, 0.8f, 0.9f, 1, 1);
+    r.DrawRect(280, y, 960, 46, field == id ? 0.18f : 0.05f, field == id ? 0.32f : 0.12f,
+               field == id ? 0.42f : 0.18f, 0.95f);
+    drawText(r, 296, y + 12, val.empty() ? "_" : val.c_str(), 1, 1, 1, 1);
+  };
+  fieldBox(0, 108, "USER", user);
+  fieldBox(1, 162, "PASS", std::string(pass.size(), '-'));
+  fieldBox(2, 216, "LOBBY", lobby);
+  fieldBox(3, 270, "RELAY", relay);
+
+  r.DrawRect(80, 332, 280, 52, 0.12f, 0.35f, 0.22f, 1);
+  drawText(r, 220, 346, "LOGIN", 1, 1, 1, 0);
+  r.DrawRect(400, 332, 320, 52, 0.35f, 0.22f, 0.12f, 1);
+  drawText(r, 560, 346, "REGISTER", 1, 1, 1, 0);
+  r.DrawRect(760, 332, 240, 52, 0.18f, 0.28f, 0.5f, 1);
+  drawText(r, 880, 346, "SAVE", 1, 1, 1, 0);
+  drawText(r, 640, 396, status && status[0] ? status : "SET LOBBY/RELAY IP THEN LOGIN", 1, 0.85f, 0.4f, 0);
+
+  if (pad) {
+    static const char* keys[12] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ".", ":"};
+    for (int i = 0; i < 12; i++) {
+      float x = 80.f + (i % 6) * 190.f;
+      float y = 450.f + (i / 6) * 70.f;
+      r.DrawRect(x, y, 176, 60, 0.16f, 0.2f, 0.28f, 0.95f);
+      drawText(r, x + 88, y + 16, keys[i], 1, 1, 1, 0);
+    }
+    r.DrawRect(80, 594, 360, 56, 0.4f, 0.18f, 0.18f, 1);
+    drawText(r, 260, 608, "DEL", 1, 1, 1, 0);
+    r.DrawRect(480, 594, 360, 56, 0.18f, 0.28f, 0.5f, 1);
+    drawText(r, 660, 608, "SAVE", 1, 1, 1, 0);
+    r.DrawRect(880, 594, 320, 56, 0.12f, 0.35f, 0.22f, 1);
+    drawText(r, 1040, 608, "LOGIN", 1, 1, 1, 0);
+  }
   r.DrawRect(0, 690, 1280, 30, 0, 0, 0.25f, 0.9f);
-  drawText(r, 640, 696, "ESC QUIT", 0.8f, 0.8f, 0.8f, 0);
+  drawText(r, 640, 696, pad ? "TAP FIELD  KEYPAD IP  IME USER" : "TAB FIELD  ENTER LOGIN  ESC", 0.8f, 0.8f, 0.8f, 0);
+}
+
+int TitleScreen::HitLogin(int mx, int my, bool pad) const {
+  auto inBox = [&](float x, float y, float w, float h) {
+    return mx >= x && mx <= x + w && my >= y && my <= y + h;
+  };
+  if (inBox(280, 108, 960, 46)) return 0;
+  if (inBox(280, 162, 960, 46)) return 1;
+  if (inBox(280, 216, 960, 46)) return 2;
+  if (inBox(280, 270, 960, 46)) return 3;
+  if (inBox(80, 332, 280, 52)) return 10;
+  if (inBox(400, 332, 320, 52)) return 11;
+  if (inBox(760, 332, 240, 52)) return 12;
+  if (pad) {
+    for (int i = 0; i < 12; i++) {
+      float x = 80.f + (i % 6) * 190.f;
+      float y = 450.f + (i / 6) * 70.f;
+      if (inBox(x, y, 176, 60)) return 100 + i;
+    }
+    if (inBox(80, 594, 360, 56)) return 200;
+    if (inBox(480, 594, 360, 56)) return 12;
+    if (inBox(880, 594, 320, 56)) return 10;
+  }
+  return -1;
 }
 
 void TitleScreen::DrawRooms(Renderer& r, const std::string& user, const std::vector<std::string>& rows, int cursor,
@@ -248,7 +303,9 @@ void TitleScreen::DrawRooms(Renderer& r, const std::string& user, const std::vec
   r.DrawRect(0, 0, 1280, 90, 0.45f, 0.62f, 0.82f, 1);
   drawText(r, 80, 30, "ROOMS", 1, 1, 1, 1);
   std::string who = "HI " + user;
-  drawText(r, 1240, 30, who.c_str(), 1, 1, 1, -1);
+  drawText(r, 400, 30, who.c_str(), 1, 1, 1, 1);
+  r.DrawRect(980, 18, 260, 54, 0.18f, 0.28f, 0.5f, 1);
+  drawText(r, 1110, 32, "IP SET", 1, 1, 1, 0);
   const int vis = 7;
   int scroll = 0;
   if (cursor >= vis) scroll = cursor - vis + 1;
@@ -262,5 +319,5 @@ void TitleScreen::DrawRooms(Renderer& r, const std::string& user, const std::vec
   }
   drawText(r, 640, 620, status && status[0] ? status : "", 1, 0.85f, 0.4f, 0);
   r.DrawRect(0, 690, 1280, 30, 0, 0, 0.25f, 0.9f);
-  drawText(r, 640, 696, "ENTER JOIN   C CREATE   ESC", 0.8f, 0.8f, 0.8f, 0);
+  drawText(r, 640, 696, "JOIN  CREATE  IP SET  ESC", 0.8f, 0.8f, 0.8f, 0);
 }

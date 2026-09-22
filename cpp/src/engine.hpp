@@ -38,6 +38,8 @@ class Engine : public GgpoSession {
   void StepFightWithInputs(uint32_t i1, uint32_t i2, bool netOn);
   bool beginRoom(bool host);
   bool beginLobby();
+  void openLogin(bool connectNow);
+  bool applyIpSettings(bool saveFile);
   void leaveLobbyUi();
   void backToLobby();
   std::string contentFingerprint() const;
@@ -63,6 +65,9 @@ class Engine : public GgpoSession {
   bool running_ = true;
   bool training_ = false;
   int frame_ = 0;
+  int netSendFrame_ = 0;
+  uint32_t lastRoomStepMs_ = 0;
+  uint32_t lastNetSendMs_ = 0;
   std::string mode_ = "local";
   std::string connectIp_;
   std::string relayHost_ = "127.0.0.1";
@@ -72,8 +77,15 @@ class Engine : public GgpoSession {
   int lobbyPort_ = 8080;
   std::string loginUser_;
   std::string loginPass_;
+  std::string lobbyEdit_;
+  std::string relayEdit_;
+  std::string loginNote_;
   int loginField_ = 0;
   int roomCursor_ = 0;
+  std::string autoUser_;
+  bool autoCreate_ = false;
+  bool autoJoin_ = false;
+  bool autoAuthSent_ = false;
   FILE* inputLog_ = nullptr;
   uint32_t lastLogBits_ = 0xFFFFFFFFu;
   int lastLogState_ = -999;

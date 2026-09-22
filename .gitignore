@@ -6,9 +6,23 @@ vendor/*
 *.log
 *.cmd
 *.bat
+!android/gradlew.bat
+!data/net.ini.example
+
+# C++ / Android local outputs
+bin_cpp/
+_cli_*.txt
+_host_*.txt
+cpp/third_party/*.tar.gz
+cpp/docs/~$*
+android/local.properties
+android/_build_err.txt
+android/_find_*.py
+android/_licenses.py
 /*.sh
 !build/**/*.sh
 *.png
+!cpp/docs/*.png
 save/*
 Ikemen_GO.exe
 Ikemen_GO_Linux
@@ -24,6 +38,7 @@ ScreenpackLicense.txt
 chars/*
 data/big/*
 data/*
+!data/net.ini.example
 !data/action.zss
 !data/common.air
 !data/common.cmd

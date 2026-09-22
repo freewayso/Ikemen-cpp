@@ -68,6 +68,7 @@ struct RoomPlay {
   struct Slot {
     uint32_t bits[2]{};
     uint8_t got = 0;
+    uint32_t readyMs = 0;
   };
   std::map<int32_t, Slot> pending;
   std::deque<FrameRec> hist;
@@ -158,7 +159,22 @@ static void sendCatchup(Sess* s, RoomPlay* rm, int32_t from) {
   sendFs(s, m, extra, off);
 }
 
-static void tryConfirm(RoomPlay* rm) {
+static void sendConfirm(RoomPlay* rm, const FrameRec& rec) {
+  FsMsg m;
+  m.cmd = kFsConfirm;
+  m.frame = rec.frame;
+  m.a = rec.i0;
+  m.b = rec.i1;
+  m.seed = rm->seed;
+  for (int i = 0; i < 2; i++) {
+    if (rm->p[i]) {
+      std::memcpy(m.room, rm->p[i]->room, 8);
+      sendFs(rm->p[i], m);
+    }
+  }
+}
+
+static void tryConfirm(RoomPlay* rm, uint32_t t) {
   for (;;) {
     int32_t need = rm->confirmed + 1;
     auto it = rm->pending.find(need);
@@ -168,22 +184,11 @@ static void tryConfirm(RoomPlay* rm) {
     while ((int)rm->hist.size() > 3600) rm->hist.pop_front();
     rm->confirmed = need;
     rm->pending.erase(it);
-    if (rec.frame < 3 || rec.frame % 60 == 0) {
+    if (rec.frame < 8 || rec.frame % 60 == 0 || rec.i0 || rec.i1) {
       logf("confirm room frame=%d p0=%u p1=%u hist=%d\n", rec.frame, rec.i0, rec.i1,
            (int)rm->hist.size());
     }
-    FsMsg m;
-    m.cmd = kFsConfirm;
-    m.frame = rec.frame;
-    m.a = rec.i0;
-    m.b = rec.i1;
-    m.seed = rm->seed;
-    for (int i = 0; i < 2; i++) {
-      if (rm->p[i]) {
-        std::memcpy(m.room, rm->p[i]->room, 8);
-        sendFs(rm->p[i], m);
-      }
-    }
+    sendConfirm(rm, rec);
   }
 }
 
@@ -334,10 +339,13 @@ int main(int argc, char** argv) {
             RoomPlay* rp = s->play;
             int32_t fr = m.frame;
             if (fr < 0) continue;
+            if (fr <= rp->confirmed) continue;
             auto& slot = rp->pending[fr];
+            uint8_t prev = slot.got;
             slot.bits[s->role] = m.a;
             slot.got |= (uint8_t)(1u << s->role);
-            tryConfirm(rp);
+            if (slot.got == 3 && prev != 3) slot.readyMs = t;
+            tryConfirm(rp, t);
           } else if (m.cmd == kFsCatchup && s->play) {
             if (m.frame == 0 || m.frame % 120 == 0) {
               logf("catchup room %.8s from=%d confirmed=%d\n", m.room, (int)m.frame,
@@ -348,6 +356,9 @@ int main(int argc, char** argv) {
         }
         ikcp_flush(s->kcp);
       }
+    }
+    for (auto& kv : plays) {
+      if (kv.second) tryConfirm(kv.second, t);
     }
     for (auto& kv : sessByAddr) {
       Sess* s = kv.second;

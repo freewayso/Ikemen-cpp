@@ -162,6 +162,21 @@ void CnsBank::Enter(Fighter& f, int no, int ctrlOverride) {
       f.snap.ctrl = 1;
     }
     else if (no == State::StandingPunch) { f.snap.stateType = +StateType::Stand; f.snap.moveType = +MoveType::Attack; f.snap.physics = +Physics::Stand; f.SetAnim(+State::StandingPunch); f.snap.ctrl = 0; }
+    else if (no == State::FireCannon) {
+      f.snap.stateType = +StateType::Stand;
+      f.snap.moveType = +MoveType::Attack;
+      f.snap.physics = +Physics::Stand;
+      f.SetAnim(+State::StandingPunch);
+      f.snap.ctrl = 0;
+      f.snap.vel.x = 0;
+    }
+    else if (no == State::FireCannonHit) {
+      f.snap.stateType = +StateType::Air;
+      f.snap.moveType = +MoveType::Hit;
+      f.snap.physics = +Physics::None;
+      f.SetAnim(+State::AirGetHitShake);
+      f.snap.ctrl = 0;
+    }
     else if (no == State::StandGetHitShake) { f.snap.stateType = +StateType::Stand; f.snap.moveType = +MoveType::Hit; f.snap.physics = +Physics::None; f.SetAnim(+State::StandGetHitShake); f.snap.vel = {0, 0}; f.snap.ctrl = 0; }
     else if (no == State::StandGetHitSlide) { f.snap.stateType = +StateType::Stand; f.snap.moveType = +MoveType::Hit; f.snap.physics = +Physics::Stand; f.SetAnim(+State::StandGetHitSlide); f.snap.ctrl = 0; }
     else if (no == State::CrouchGetHitShake) { f.snap.stateType = +StateType::Crouch; f.snap.moveType = +MoveType::Hit; f.snap.physics = +Physics::None; f.SetAnim(+State::CrouchGetHitShake); f.snap.vel = {0, 0}; f.snap.ctrl = 0; }
@@ -280,6 +295,8 @@ void CnsBank::OnHit(Fighter& atk, Fighter& def, HitResult hitResult) {
   bool kill = guarded ? h.guardKill != 0 : h.kill != 0;
   int dmg = ComputeDamage(def, atk, raw, kill, true);
   def.snap.ghvDamage += dmg;
+  if (!guarded)
+    def.snap.rage = std::min(def.snap.rageMax, def.snap.rage + 1);
   if (world) {
     DamagePopup pop;
     pop.pos.x = def.snap.pos.x;
@@ -400,6 +417,35 @@ void CnsBank::GlobalCollision(Fighter& a, Fighter& b) {
   }
 }
 
+void CnsBank::SpawnFireCannon(Fighter& f) {
+  if (!world) return;
+  Projectile p;
+  p.active = 1;
+  p.owner = f.playerIndex;
+  p.anim = +State::StandingPunch;
+  p.hits = 1;
+  p.removetime = 52;
+  p.facing = f.snap.facing;
+  p.pos.x = f.snap.pos.x + 30.f * (float)f.snap.facing;
+  p.pos.y = f.snap.pos.y - 50.f;
+  p.vel.x = 8.f;
+  p.hit.on = true;
+  p.hit.damage = 100;
+  p.hit.gvx = -8.f;
+  p.hit.gvy = -4.f;
+  p.hit.avx = -6.f;
+  p.hit.avy = -5.f;
+  p.hit.guardvx = -4.f;
+  p.hit.fall = 1;
+  p.hit.hittime = 20;
+  p.hit.airHittime = 24;
+  p.hit.pause1 = 6;
+  p.hit.pause2 = 10;
+  p.hit.p2stateno = +State::FireCannonHit;
+  p.hit.kill = 1;
+  world->projs.push_back(p);
+}
+
 void CnsBank::TickProjectiles(Fighter& p1, Fighter& p2, float left, float right) {
   if (!world) return;
   auto clsnAt = [](Fighter& owner, int anim, Vec2 pos, int facing, bool clsn1) -> std::vector<Rect> {
@@ -467,6 +513,8 @@ void CnsBank::TickProjectiles(Fighter& p1, Fighter& p2, float left, float right)
     if (!p.hit.on || p.hits <= 0) continue;
     auto atkBox = clsnAt(own, p.anim, p.pos, p.facing, true);
     if (atkBox.empty()) atkBox = clsnAt(own, p.anim, p.pos, p.facing, false);
+    if (atkBox.empty())
+      atkBox.push_back({p.pos.x - 12.f, p.pos.y - 12.f, p.pos.x + 12.f, p.pos.y + 12.f});
     auto* fb = def.CurrentFrame();
     if (!fb || fb->clsn2.empty()) continue;
     std::vector<Rect> defBox;
@@ -480,9 +528,11 @@ void CnsBank::TickProjectiles(Fighter& p1, Fighter& p2, float left, float right)
     }
     if (!boxesHit(atkBox, defBox)) continue;
     Fighter fake;
+    fake.playerIndex = p.owner;
     fake.snap.hit = p.hit;
     fake.snap.hitOnce = 0;
-    fake.snap.attackMul = 1;
+    fake.snap.attackMul = own.snap.attackMul;
+    fake.snap.facing = p.facing;
     OnHit(fake, def, HitResult::Hit);
     p.hits--;
     p.hitpause = p.hit.pause1;

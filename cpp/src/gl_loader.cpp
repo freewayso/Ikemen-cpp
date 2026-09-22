@@ -1,6 +1,5 @@
 #include "gl_loader.hpp"
 #include <SDL.h>
-#include <SDL_opengl.h>
 #include <cstring>
 
 static void* (*getProc)(const char*) = nullptr;

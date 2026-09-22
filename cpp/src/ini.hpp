@@ -94,3 +94,42 @@ inline NetCfg LoadNetIni() {
   }
   return c;
 }
+
+inline bool SaveNetIni(const NetCfg& c) {
+  const char* paths[] = {"data/net.ini", "net.ini"};
+  for (const char* p : paths) {
+    FILE* f = std::fopen(p, "wb");
+    if (!f) continue;
+    std::fprintf(f,
+                 "; KCP fight relay (UDP) + proto3 lobby (TCP).\n"
+                 "[Net]\n"
+                 "Relay=%s\n"
+                 "Port=%d\n"
+                 "Room=%s\n"
+                 "Lobby=%s\n"
+                 "LobbyPort=%d\n",
+                 c.relay.c_str(), c.port, c.room.c_str(), c.lobby.c_str(), c.lobbyPort);
+    std::fclose(f);
+    std::fprintf(stderr, "saved net.ini %s lobby=%s:%d relay=%s:%d\n", p, c.lobby.c_str(), c.lobbyPort,
+                 c.relay.c_str(), c.port);
+    return true;
+  }
+  return false;
+}
+
+inline void ParseHostPort(const std::string& s, std::string& host, int& port) {
+  std::string t = iniTrim(s);
+  if (t.empty()) return;
+  auto c = t.rfind(':');
+  if (c != std::string::npos && c > 0 && c + 1 < t.size() && std::isdigit((unsigned char)t[c + 1])) {
+    host = t.substr(0, c);
+    int p = std::atoi(t.c_str() + c + 1);
+    if (p > 0 && p < 65536) port = p;
+  } else {
+    host = t;
+  }
+}
+
+inline std::string FormatHostPort(const std::string& host, int port) {
+  return host + ":" + std::to_string(port);
+}

@@ -54,6 +54,8 @@ enum class State : int {
   GuardHitCrouch = 152,
   GuardHitAir = 154,
   StandingPunch = 200,
+  FireCannon = 300,
+  FireCannonHit = 301,
   KfmAirSpecial = 212,
   StandGetHitShake = 5000,
   StandGetHitSlide = 5001,
@@ -220,6 +222,8 @@ struct FighterSnapshot {
   int lifeMax = 1000;
   int power = 3000;
   int powerMax = 3000;
+  int rage = 0;
+  int rageMax = 1;
   int ctrl = 1;
   int facing = 1;
   int teamSide = 1;

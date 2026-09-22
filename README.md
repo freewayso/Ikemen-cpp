@@ -7,6 +7,16 @@
 
 Ikemen GO is an open source fighting game engine that supports resources from the [M.U.G.E.N](https://en.wikipedia.org/wiki/Mugen_(game_engine)) engine, written in Google’s programming language, [Go](https://go.dev/). It is a complete rewrite of a prior engine known simply as Ikemen.
 
+## C++ / Android 局域网对战
+
+本仓库另有一套 C++ 客户端（大厅 TCP + KCP 对战），可在 PC 与 Android 之间开房间。操作步骤、部署和按键说明见 **[cpp/README.md](./cpp/README.md)**。
+
+![Android 对战画面：遥感 + J/K/C](cpp/docs/android-fight.png)
+
+- 先在 PC 启动 `ikemen_lobby`（TCP 8080）和 `ikemen_relay`（UDP 9000），再开 `ikemen_cpp` 或安装 APK。
+- `data/net.ini` 填这台 PC 的局域网 IP。手机与 PC 同一 Wi‑Fi，用户名不要重复。
+- 对战：遥感/WASD 移动，J/K 出拳；被打 1 次怒气满格，按 **C** 向对方放火炮（命中扣 100 血）。
+
 ## Features
 Ikemen GO aims for backwards-compatibility on par with M.U.G.E.N version 1.1 Beta, while simultaneously expanding on its features in a variety of ways.
 

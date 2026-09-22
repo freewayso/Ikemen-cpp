@@ -21,6 +21,8 @@ class RoomSync {
   uint32_t Seed() const { return seed_; }
   const char* WaitLabel() const;
   int WantFrame() const { return want_; }
+  int ServerLatest() const { return serverLatest_; }
+  bool HaveWant() const { return ready_.find(want_) != ready_.end(); }
   int RttMs() const;
   int UdpSend(const char* buf, int len);
 

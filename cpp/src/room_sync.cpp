@@ -212,7 +212,7 @@ void RoomSync::SendInput(int32_t frame, uint32_t bits) {
   if (!joined_ || !kcp_) return;
   if (frame == lastSentFrame_ && bits == lastSentBits_) {
     uint32_t t = nowMs();
-    if (t - lastInputMs_ < 40) return;
+    if (t - lastInputMs_ < 16) return;
   }
   lastInputMs_ = nowMs();
   lastSentFrame_ = frame;

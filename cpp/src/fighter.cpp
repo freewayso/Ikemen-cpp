@@ -9,6 +9,8 @@ void Fighter::Reset(int side, float x, float y) {
   snap.pos = {x, y};
   snap.life = snap.lifeMax = 1000;
   snap.power = snap.powerMax = 3000;
+  snap.rage = 0;
+  snap.rageMax = 1;
   snap.ctrl = 1;
   snap.alive = 1;
   snap.state = +State::Stand;
