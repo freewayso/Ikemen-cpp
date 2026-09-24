@@ -17,6 +17,7 @@
 #include <array>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 class Engine : public GgpoSession {
  public:
@@ -45,6 +46,7 @@ class Engine : public GgpoSession {
   std::string contentFingerprint() const;
   Renderer render_;
   Sff sff_;
+  Sff fxSff_;
   AirBank air_;
   Fighter p1_, p2_;
   LuaHost lua_;
@@ -94,6 +96,7 @@ class Engine : public GgpoSession {
   float p2AiLevel_ = 4.f;
   AiInput p1ai_, p2ai_;
   FightWorld world_;
+  std::vector<SpriteImage> cannonShot_, cannonBoom_, cannonMuzzle_;
   std::array<uint32_t, 256> i1hist_{}, i2hist_{};
   int fpsShow_ = 0;
   int fpsCount_ = 0;

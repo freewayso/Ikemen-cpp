@@ -247,6 +247,31 @@ bool Engine::Init(int argc, char** argv) {
   cam_.Setup(stage_.boundleft, stage_.boundright, stage_.tension);
   if (!hud_.Load(root + "/data/fight.sff"))
     std::fprintf(stderr, "warn: fight.sff load failed\n");
+  if (!fxSff_.Load(root + "/data/fightfx.sff"))
+    std::fprintf(stderr, "warn: fightfx.sff load failed\n");
+  auto loadCannon = [&](const char* prefix, int n, int ax, int ay, std::vector<SpriteImage>& dst) {
+    dst.clear();
+    char path[512];
+    for (int i = 0; i < n; i++) {
+      std::snprintf(path, sizeof(path), "%s/data/cannon/%s_%02d.png", root.c_str(), prefix, i);
+      SpriteImage img;
+      if (!Sff::LoadPng(path, img)) {
+        std::fprintf(stderr, "warn: cannon png missing %s\n", path);
+        dst.clear();
+        return false;
+      }
+      img.ax = ax;
+      img.ay = ay;
+      dst.push_back(std::move(img));
+    }
+    return true;
+  };
+  if (!loadCannon("shot", 8, 10, 16, cannonShot_) || !loadCannon("boom", 6, 24, 24, cannonBoom_) ||
+      !loadCannon("muzzle", 4, 4, 14, cannonMuzzle_))
+    std::fprintf(stderr, "warn: fire-cannon pack incomplete (data/cannon)\n");
+  else
+    std::fprintf(stderr, "cannon pack: %zu shot %zu boom %zu muzzle\n", cannonShot_.size(),
+                 cannonBoom_.size(), cannonMuzzle_.size());
   title_.Load(root + "/data/ikemen1");
 
   p1_.playerIndex = 0;
@@ -950,11 +975,30 @@ void Engine::DrawFight() {
     float scl = cam_.Scale();
     float x = kGameW * 0.5f + (p.pos.x - cam_.X()) * scl;
     float y = stage_.zoffset + p.pos.y * scl;
-    render_.DrawRect(x - 11.f, y - 8.f, 22.f, 16.f, 1.f, 0.28f, 0.05f, 1);
-    render_.DrawRect(x - 7.f, y - 5.f, 14.f, 10.f, 1.f, 0.75f, 0.15f, 1);
-    float tip = p.facing >= 0 ? x + 6.f : x - 14.f;
-    render_.DrawRect(tip, y - 3.f, 8.f, 6.f, 1.f, 0.95f, 0.45f, 0.95f);
+    const std::vector<SpriteImage>* pack = p.spark ? &cannonBoom_ : &cannonShot_;
+    const SpriteImage* spr = nullptr;
+    if (!pack->empty())
+      spr = &(*pack)[(size_t)std::max(0, p.sprElem) % pack->size()];
+    if (!spr) spr = fxSff_.Get((uint16_t)p.sprGroup, (uint16_t)p.sprElem);
+    if (spr) {
+      float facing = (float)p.facing;
+      float pulse = p.spark ? 1.05f : 1.f;
+      render_.DrawSprite(*spr, x, y, facing, pulse * scl, pulse * scl, 1, 1, 1, 1);
+    } else {
+      render_.DrawRect(x - 11.f, y - 8.f, 22.f, 16.f, 1.f, 0.28f, 0.05f, 1);
+    }
   }
+  auto drawMuzzle = [&](const Fighter& f) {
+    if (f.snap.state != State::FireCannon || f.snap.time < 8 || f.snap.time > 14) return;
+    if (cannonMuzzle_.empty()) return;
+    int i = std::clamp(f.snap.time - 8, 0, (int)cannonMuzzle_.size() - 1);
+    float scl = cam_.Scale();
+    float x = kGameW * 0.5f + (f.snap.pos.x + 28.f * (float)f.snap.facing - cam_.X()) * scl;
+    float y = stage_.zoffset + (f.snap.pos.y - 52.f) * scl;
+    render_.DrawSprite(cannonMuzzle_[(size_t)i], x, y, (float)f.snap.facing, scl, scl, 1, 1, 1, 1);
+  };
+  drawMuzzle(p1_);
+  drawMuzzle(p2_);
   stage_.Draw(render_, cam_.X(), 0, 1);
   for (auto& p : world_.popups) {
     float scl = cam_.Scale();

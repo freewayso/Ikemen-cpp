@@ -102,7 +102,8 @@ local function loco(self)
   local st = self:state()
   local dir = wantWalk(self)
   if st == State.FireCannon then
-    if self:animEnded() or self:time() > 22 then self:changeState(State.Stand, 1) end
+    if self:time() == 8 then self:spawnFireCannon() end
+    if self:animEnded() or self:time() > 40 then self:changeState(State.Stand, 1) end
     return
   end
   if st == State.StandingPunch then

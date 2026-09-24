@@ -73,6 +73,8 @@ enum class State : int {
 enum class Anim : int {
   JumpAir = 41,
   Land = 47,
+  FireCannon = 300,
+  FireCannonHit = 301,
 };
 
 inline constexpr int operator+(State s) noexcept { return static_cast<int>(s); }

@@ -34,9 +34,13 @@ static int f_fireCannon(lua_State* L) {
   }
   f->snap.rage = 0;
   f->ChangeState(+State::FireCannon, 0);
-  if (f->cns) f->cns->SpawnFireCannon(*f);
   lua_pushboolean(L, 1);
   return 1;
+}
+static int f_spawnFireCannon(lua_State* L) {
+  auto* f = checkF(L);
+  if (f->cns) f->cns->SpawnFireCannon(*f);
+  return 0;
 }
 static int f_ctrl(lua_State* L) {
   auto* f = checkF(L);
@@ -156,6 +160,7 @@ static const luaL_Reg kFighterMeta[] = {
   {"life", f_life}, {"lifeMax", f_lifeMax}, {"lifeSet", f_lifeSet},
   {"powerSet", f_powerSet}, {"power", f_power},
   {"rage", f_rage}, {"rageMax", f_rageMax}, {"fireCannon", f_fireCannon},
+  {"spawnFireCannon", f_spawnFireCannon},
   {"ctrl", f_ctrl},
   {"state", f_state}, {"time", f_time}, {"anim", f_anim}, {"animEnded", f_animEnded},
   {"alive", f_alive}, {"hitpause", f_hitpause}, {"hitstun", f_hitstun},

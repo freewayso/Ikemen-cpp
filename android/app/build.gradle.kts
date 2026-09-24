@@ -86,6 +86,7 @@ tasks.register("syncGameAssets") {
         copyRel("data/fight.def")
         copyRel("data/fightfx.sff")
         copyRel("data/fightfx.air")
+        copyRel("data/cannon")
         copyRel("data/glyphs.sff")
         copyRel("data/ikemen1")
         copyRel("cpp/lua")

@@ -23,6 +23,8 @@ android/_licenses.py
 !build/**/*.sh
 *.png
 !cpp/docs/*.png
+!data/cannon/
+!data/cannon/**
 save/*
 Ikemen_GO.exe
 Ikemen_GO_Linux
@@ -39,6 +41,8 @@ chars/*
 data/big/*
 data/*
 !data/net.ini.example
+!data/cannon/
+!data/cannon/**
 !data/action.zss
 !data/common.air
 !data/common.cmd

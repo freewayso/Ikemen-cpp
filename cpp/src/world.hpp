@@ -14,6 +14,11 @@ struct Projectile {
   int hitpause = 0;
   int priority = 1;
   int priorityPoints = 1;
+  int sprGroup = 2;
+  int sprElem = 0;
+  int sprTime = 0;
+  int sprN = 14;
+  int spark = 0;
   Vec2 pos, vel, accel;
   Vec2 velmul{1.f, 1.f};
   HitDef hit;

@@ -422,3 +422,17 @@ const SpriteImage* Sff::Get(uint16_t group, uint16_t number, int palRemap) const
   remapCache_[key] = std::move(baked);
   return p;
 }
+
+bool Sff::LoadPng(const std::string& path, SpriteImage& out) {
+  int w = 0, h = 0, n = 0;
+  unsigned char* px = stbi_load(path.c_str(), &w, &h, &n, 4);
+  if (!px || w <= 0 || h <= 0) {
+    if (px) stbi_image_free(px);
+    return false;
+  }
+  out.w = w;
+  out.h = h;
+  out.rgba.assign(px, px + (size_t)w * h * 4);
+  stbi_image_free(px);
+  return true;
+}

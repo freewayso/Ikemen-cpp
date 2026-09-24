@@ -47,7 +47,7 @@ bool AndroidPrepareDataRoot(std::string& outRoot) {
   if (!base || !base[0]) return false;
   outRoot = std::string(base) + "/ikemen";
   mkdir(outRoot.c_str(), 0755);
-  static const char kAssetVer[] = "4";
+  static const char kAssetVer[] = "6";
   std::string verpath = outRoot + "/.assets_ver";
   bool skip = false;
   FILE* vf = std::fopen(verpath.c_str(), "rb");

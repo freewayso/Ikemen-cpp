@@ -166,7 +166,7 @@ void CnsBank::Enter(Fighter& f, int no, int ctrlOverride) {
       f.snap.stateType = +StateType::Stand;
       f.snap.moveType = +MoveType::Attack;
       f.snap.physics = +Physics::Stand;
-      f.SetAnim(+State::StandingPunch);
+      f.SetAnim(+Anim::FireCannon);
       f.snap.ctrl = 0;
       f.snap.vel.x = 0;
     }
@@ -174,7 +174,7 @@ void CnsBank::Enter(Fighter& f, int no, int ctrlOverride) {
       f.snap.stateType = +StateType::Air;
       f.snap.moveType = +MoveType::Hit;
       f.snap.physics = +Physics::None;
-      f.SetAnim(+State::AirGetHitShake);
+      f.SetAnim(+Anim::FireCannonHit);
       f.snap.ctrl = 0;
     }
     else if (no == State::StandGetHitShake) { f.snap.stateType = +StateType::Stand; f.snap.moveType = +MoveType::Hit; f.snap.physics = +Physics::None; f.SetAnim(+State::StandGetHitShake); f.snap.vel = {0, 0}; f.snap.ctrl = 0; }
@@ -422,13 +422,15 @@ void CnsBank::SpawnFireCannon(Fighter& f) {
   Projectile p;
   p.active = 1;
   p.owner = f.playerIndex;
-  p.anim = +State::StandingPunch;
+  p.anim = +Anim::FireCannon;
   p.hits = 1;
-  p.removetime = 52;
+  p.removetime = 56;
   p.facing = f.snap.facing;
-  p.pos.x = f.snap.pos.x + 30.f * (float)f.snap.facing;
-  p.pos.y = f.snap.pos.y - 50.f;
-  p.vel.x = 8.f;
+  p.pos.x = f.snap.pos.x + 52.f * (float)f.snap.facing;
+  p.pos.y = f.snap.pos.y - 54.f;
+  p.vel.x = 8.5f;
+  p.sprGroup = 2;
+  p.sprN = 8;
   p.hit.on = true;
   p.hit.damage = 100;
   p.hit.gvx = -8.f;
@@ -494,9 +496,15 @@ void CnsBank::TickProjectiles(Fighter& p1, Fighter& p2, float left, float right)
     }
   }
 
+  std::vector<Projectile> sparks;
   for (auto& p : world->projs) {
     if (!p.active) continue;
     if (p.hitpause > 0) { p.hitpause--; continue; }
+    p.sprTime++;
+    if (p.sprN > 0 && p.sprTime >= 2) {
+      p.sprTime = 0;
+      p.sprElem = (p.sprElem + 1) % p.sprN;
+    }
     p.pos.x += p.vel.x * (float)p.facing;
     p.pos.y += p.vel.y;
     p.vel.x += p.accel.x;
@@ -534,8 +542,21 @@ void CnsBank::TickProjectiles(Fighter& p1, Fighter& p2, float left, float right)
     fake.snap.attackMul = own.snap.attackMul;
     fake.snap.facing = p.facing;
     OnHit(fake, def, HitResult::Hit);
+    Projectile spark;
+    spark.active = 1;
+    spark.owner = p.owner;
+    spark.hits = 0;
+    spark.hit.on = false;
+    spark.spark = 1;
+    spark.removetime = 14;
+    spark.facing = p.facing;
+    spark.pos = p.pos;
+    spark.sprGroup = 3;
+    spark.sprN = 6;
+    sparks.push_back(spark);
     p.hits--;
     p.hitpause = p.hit.pause1;
     if (p.hits <= 0) p.active = 0;
   }
+  for (auto& s : sparks) world->projs.push_back(s);
 }
